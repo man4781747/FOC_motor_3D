@@ -79,13 +79,18 @@ scripts/
   build_glb.py          OBJ + 貼圖 -> pcb.glb;也提供共用的 GLB 寫入器 / 網格處理函式
   build_motor.py        用 manifold3d(CSG)建 2804 馬達,尺寸都是檔案開頭的常數
   build_assembly.py     讀入 pcb.glb,加上翻轉後的馬達、銅柱、螺絲、焊到 U/V/W 的出線
+  build_gimbal.py       雙軸雲台組合 + 3 個列印件 STL
+  build_print_step.py   3 個列印件 STEP(CadQuery),給 CAD 軟體修改
   glb_to_gltf_json.py   GLB -> 單檔 glTF JSON(base64 內嵌)
 output/
   pcb.glb                    PCB(約 8.5 MB)
   motor_2804.glb             馬達本體(約 0.4 MB)
   pcb_motor_assembly.glb     組合模型(約 9.1 MB)
   textures/                  板面貼圖(4096 x 4096)
-  viewer/                    three.js 檢視頁 + 三個 .gltf.json 模型
+  gimbal_2axis.glb           雙軸雲台(約 10 MB)
+  print/                     列印件 STL(已擺好列印方向)
+  step/                      列印件 STEP(組裝位置座標)
+  viewer/                    three.js 檢視頁 + 四個 .gltf.json 模型
 ```
 
 ## 模型規格
@@ -129,6 +134,7 @@ output/
 ```bash
 uv run scripts/build_gimbal.py output/pcb_motor_assembly.glb output/gimbal_2axis.glb
 uv run scripts/glb_to_gltf_json.py output/gimbal_2axis.glb output/viewer/gimbal_2axis.gltf.json
+uv run scripts/build_print_step.py          # 列印件 STEP(output/step/),給 CAD 軟體修改
 ```
 
 安裝方式(詳見腳本開頭說明):
@@ -143,6 +149,21 @@ uv run scripts/glb_to_gltf_json.py output/gimbal_2axis.glb output/viewer/gimbal_
 | `base.stl` | 62.8 × 62.8 × 12 | 底板朝下 | 72 mm²(沉頭孔頂的小橋接) |
 | `frame.stl` | 89 × 64 × 66 | 平台朝下 | 0.2 mm² |
 | `camera_bracket.stl` | 36 × 39 × 42 | 法蘭朝下 | 23 mm²(M2 小孔頂部) |
+
+### 在 CAD 軟體修改列印件(STEP)
+
+`output/print/*.stl` 是三角網格,CAD 軟體讀得到但幾乎不能改。要在 FreeCAD、SolidWorks、Fusion 裡修改,
+請用 `output/step/*.step`:
+
+- 由 `scripts/build_print_step.py` 用 CadQuery(OpenCASCADE)產生,是真正的實體:
+  只有平面、圓柱面(孔)與圓錐面(凸柱 45° 段),沒有自由曲面
+- 尺寸常數直接從 `build_gimbal.py` 匯入,改尺寸只要改那邊,兩支腳本重跑後 STL 與 STEP 一致
+- 座標為**組裝位置**(mm、Z 朝上、水平軸 = Z 軸),方便和其他零件對位;列印方向請用 STL
+- 腳本會把 STEP 與 manifold3d 版本互相比對(最大表面偏差 > 0.05 mm 就報錯),
+  目前三件偏差 0.010–0.029 mm,只是多邊形近似圓的誤差
+- 匯入後沒有特徵樹(dumb solid):FreeCAD 可直接加特徵、布林運算;SolidWorks 可用直接編輯
+  (Move / Delete Face),Professional / Premium 版可用 FeatureWorks 辨識出孔、擠出等特徵
+- 注意:在 CAD 裡做的修改不會回寫到 Python 腳本
 
 ## 交接:待辦事項
 
