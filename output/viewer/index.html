@@ -98,7 +98,7 @@
   <dl id="spec-list"></dl>
   <div class="axes" id="axes" hidden>
     <label for="pan">水平 Pan<input id="pan" type="range" min="-180" max="180" step="1" value="0"><output id="pan-out">0°</output></label>
-    <label for="tilt">俯仰 Tilt<input id="tilt" type="range" min="-30" max="60" step="1" value="0"><output id="tilt-out">0°</output></label>
+    <label for="tilt">俯仰 Tilt<input id="tilt" type="range" min="-90" max="90" step="1" value="0"><output id="tilt-out">0°</output></label>
     <button id="axes-reset" type="button">歸零</button>
   </div>
   <p class="hint">拖曳自由旋轉 · 滾輪/雙指縮放 · 右鍵平移</p>
@@ -162,8 +162,8 @@ const MODELS = {
   },
   gimbal: {
     file: 'gimbal_2axis.gltf.json', title: '雙軸雲台(2 × 2804 模組)',
-    specs: [['水平軸', '底座鎖轉子,定子以上整組轉'], ['俯仰軸', '模組貼立板,轉子帶相機支架'],
-            ['俯仰軸高', '82 mm'], ['連接', 'M2.5 銅柱 8 mm']],
+    specs: [['水平軸', '定子 + PCB 固定在底座,轉子帶動平台'], ['俯仰軸', '模組貼立板,轉子帶相機支架'],
+            ['俯仰軸高', '76 mm'], ['連接', 'M2.5 銅柱 8 mm']],
   },
   assembly: {
     file: 'pcb_motor_assembly.gltf.json', title: 'PCB + 2804 馬達組合',

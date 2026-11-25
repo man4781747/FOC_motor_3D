@@ -148,13 +148,13 @@ uv run scripts/glb_to_gltf_json.py output/gimbal_2axis.glb output/viewer/gimbal_
 
 上一台電腦資源不足,以下工作尚未完成(2026-11-25):
 
-- [ ] **干涉檢查**:確認凸柱、銅柱、螺絲、相機沒有陷進列印件或撞到 PCB 正面零件
-  (LQFP 與晶振很靠近安裝孔,凸柱頂端刻意只做 Ø4.6)。做法:GLB 中的列印件為了平滑著色拆過頂點,
-  先 `mesh.merge_vertices(merge_tex=True, merge_norm=True)` 恢復水密,再用
-  `trimesh.proximity.signed_distance` 檢查其他零件頂點,深度 > 0.2 mm 視為干涉
-- [ ] **檢視頁雲台規格卡**(`output/viewer/index.html` 的 `MODELS.gimbal`):俯仰軸高改為 76 mm;
-  水平軸說明改為「定子 + PCB 固定在底座,轉子帶動平台」;旋轉範圍內已不會撞到平台,
-  俯仰滑桿(`#tilt`)可放寬到 ±90°
+- [x] **干涉檢查**(2026-11-25 完成):靜止、水平 60°、俯仰 ±60° / ±90°、水平 45° + 俯仰 90° 共 7 個姿勢,
+  門檻 0.2 mm 下皆無干涉。做法:列印件先 `mesh.merge_vertices(merge_tex=True, merge_norm=True)` 恢復水密,
+  再用 `trimesh.proximity.signed_distance` 檢查其他零件的頂點**加表面均勻取樣點**(只查頂點會漏掉穿過大平面
+  中間的情況,例如凸柱頂進 PCB 板面)。最貼近處:水平模組一顆正面零件(`parts_mtl15`)陷入底座凸柱 0.16 mm,
+  低於門檻;俯仰 -90° 時鏡頭朝下,離平台約 1.8 mm
+- [x] **檢視頁雲台規格卡**(`output/viewer/index.html` 的 `MODELS.gimbal`):俯仰軸高 76 mm;
+  水平軸說明「定子 + PCB 固定在底座,轉子帶動平台」;俯仰滑桿(`#tilt`)放寬到 ±90°
 - [ ] 檢視頁改完後重新發布網頁(Artifact)
 - [ ] 實際列印前,用切片軟體再確認一次 `output/print/` 的 STL
 
