@@ -120,3 +120,46 @@ output/
 - 零件的金屬材質是依 MTL 顏色推估的(中性灰且反光強 → 金屬),少數零件可能不準
 - `build_glb.py` 的重疊平面清理以凸包取代,若零件有凹形且重疊的平面,外形可能被填平
 - 馬達只有外觀,沒有內部繞組與磁鐵
+
+## 雙軸雲台(進行中)
+
+`scripts/build_gimbal.py` 用兩組「PCB + 2804 馬達」模組組成水平(Pan)+ 俯仰(Tilt)雲台,
+並輸出三個 3D 列印結構件的 STL(已擺好列印方向)到 `output/print/`。
+
+```bash
+uv run scripts/build_gimbal.py output/pcb_motor_assembly.glb output/gimbal_2axis.glb
+uv run scripts/glb_to_gltf_json.py output/gimbal_2axis.glb output/viewer/gimbal_2axis.gltf.json
+```
+
+安裝方式(詳見腳本開頭說明):
+
+1. **底座**:八角底板 + 4 根凸柱。水平模組 PCB 正面朝下放在凸柱上,M2.5×12 螺絲從底板下方沉頭孔鎖進模組銅柱。馬達朝上,定子與 PCB 固定,馬達線不會被扭到
+2. **框架**(平台 + 立板一體):平台用 4 顆 M2.5 從上方鎖進水平馬達轉子面(Ø16)
+3. **俯仰模組**:PCB 正面朝立板,以 M2.5 公母銅柱 8 mm 連接,螺絲從立板外側鎖入
+4. **相機支架**:4 顆 M2.5 從外側鎖進俯仰馬達轉子面;相機用 4 顆 M2 鎖在前板
+
+| 列印件 | 尺寸 (mm) | 列印方向 | 懸空 |
+|---|---|---|---|
+| `base.stl` | 62.8 × 62.8 × 12 | 底板朝下 | 72 mm²(沉頭孔頂的小橋接) |
+| `frame.stl` | 89 × 64 × 66 | 平台朝下 | 0.2 mm² |
+| `camera_bracket.stl` | 36 × 39 × 42 | 法蘭朝下 | 23 mm²(M2 小孔頂部) |
+
+## 交接:待辦事項
+
+上一台電腦資源不足,以下工作尚未完成(2026-11-25):
+
+- [ ] **干涉檢查**:確認凸柱、銅柱、螺絲、相機沒有陷進列印件或撞到 PCB 正面零件
+  (LQFP 與晶振很靠近安裝孔,凸柱頂端刻意只做 Ø4.6)。做法:GLB 中的列印件為了平滑著色拆過頂點,
+  先 `mesh.merge_vertices(merge_tex=True, merge_norm=True)` 恢復水密,再用
+  `trimesh.proximity.signed_distance` 檢查其他零件頂點,深度 > 0.2 mm 視為干涉
+- [ ] **檢視頁雲台規格卡**(`output/viewer/index.html` 的 `MODELS.gimbal`):俯仰軸高改為 76 mm;
+  水平軸說明改為「定子 + PCB 固定在底座,轉子帶動平台」;旋轉範圍內已不會撞到平台,
+  俯仰滑桿(`#tilt`)可放寬到 ±90°
+- [ ] 檢視頁改完後重新發布網頁(Artifact)
+- [ ] 實際列印前,用切片軟體再確認一次 `output/print/` 的 STL
+
+注意事項:
+
+- 本機 headless Chrome 截圖時,10 MB 以上的模型常常來不及載入;改用 Python(trimesh + matplotlib)
+  從 GLB 直接渲染來驗證比較可靠,渲染時記得套用節點變換(`scene.dump()` 或 `scene.graph`)
+- 推送需使用 `man4781747` 帳號(`gh auth switch --user man4781747`)

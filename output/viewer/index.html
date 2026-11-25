@@ -39,13 +39,20 @@
   .spec dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.8rem; }
   .spec dt { color: var(--muted); }
   .spec dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  .models { display: flex; gap: 4px; padding: 3px; background: var(--line); border-radius: 8px; }
+  .models { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; background: var(--line); border-radius: 8px; }
   .models button {
     flex: 1; font: 500 0.82rem var(--font-body); color: var(--ink); background: transparent;
     border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap;
   }
   .models button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
   .models button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .axes { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
+  .axes label { display: grid; grid-template-columns: 4.5em 1fr 3.2em; align-items: center; gap: 8px; font-size: 0.8rem; }
+  .axes output { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+  .axes input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .axes button { justify-self: start; font: 500 0.78rem var(--font-body); color: var(--ink); background: var(--line);
+    border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  .axes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .spec .hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
 
   .views {
@@ -85,9 +92,15 @@
     <button id="m-pcb" type="button" aria-pressed="true">PCB</button>
     <button id="m-motor" type="button" aria-pressed="false">2804 馬達</button>
     <button id="m-assembly" type="button" aria-pressed="false">組合</button>
+    <button id="m-gimbal" type="button" aria-pressed="false">雙軸雲台</button>
   </div>
   <h1 id="spec-title">小型獨立運作系統 PCB</h1>
   <dl id="spec-list"></dl>
+  <div class="axes" id="axes" hidden>
+    <label for="pan">水平 Pan<input id="pan" type="range" min="-180" max="180" step="1" value="0"><output id="pan-out">0°</output></label>
+    <label for="tilt">俯仰 Tilt<input id="tilt" type="range" min="-30" max="60" step="1" value="0"><output id="tilt-out">0°</output></label>
+    <button id="axes-reset" type="button">歸零</button>
+  </div>
   <p class="hint">拖曳自由旋轉 · 滾輪/雙指縮放 · 右鍵平移</p>
 </section>
 
@@ -146,6 +159,11 @@ const MODELS = {
     file: 'motor_2804.gltf.json', title: '2804 雲台無刷馬達',
     specs: [['外形', 'Ø34.5 × 15 mm'], ['中空軸', 'Ø6.5 mm'], ['頂部螺孔', '4 × M2.5 @ Ø16'],
             ['底部螺孔', '4 × M2.5 @ Ø19'], ['極對數', '7 (12N14P)'], ['KV', '220 KV']],
+  },
+  gimbal: {
+    file: 'gimbal_2axis.gltf.json', title: '雙軸雲台(2 × 2804 模組)',
+    specs: [['水平軸', '底座鎖轉子,定子以上整組轉'], ['俯仰軸', '模組貼立板,轉子帶相機支架'],
+            ['俯仰軸高', '82 mm'], ['連接', 'M2.5 銅柱 8 mm']],
   },
   assembly: {
     file: 'pcb_motor_assembly.gltf.json', title: 'PCB + 2804 馬達組合',
@@ -241,7 +259,27 @@ function showSpecs(key) {
   }
 }
 
+// 雙軸雲台:滑桿轉動 pan_group(繞 Y)與 tilt_group(繞 X)
+const axesEl = document.getElementById('axes');
+const panIn = document.getElementById('pan'), tiltIn = document.getElementById('tilt');
+let panNode = null, tiltNode = null;
+function applyAxes() {
+  document.getElementById('pan-out').textContent = panIn.value + '°';
+  document.getElementById('tilt-out').textContent = tiltIn.value + '°';
+  if (panNode) panNode.rotation.y = THREE.MathUtils.degToRad(+panIn.value);
+  if (tiltNode) tiltNode.rotation.x = THREE.MathUtils.degToRad(+tiltIn.value);  // 正值 = 抬頭
+}
+panIn.addEventListener('input', applyAxes);
+tiltIn.addEventListener('input', applyAxes);
+document.getElementById('axes-reset').addEventListener('click', () => {
+  panIn.value = 0; tiltIn.value = 0; applyAxes();
+});
+
 function place(key, root) {
+  panNode = root.getObjectByName('pan_group') || null;
+  tiltNode = root.getObjectByName('tilt_group') || null;
+  axesEl.hidden = !panNode;
+  if (panNode) applyAxes();
   if (current) scene.remove(current);
   current = root;
   scene.add(root);
