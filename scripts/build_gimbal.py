@@ -18,10 +18,11 @@
 2. 框架(平台 + 立板一體):平台用 4 顆 M2.5 從上方鎖進水平馬達轉子面螺孔(Ø16)。
 3. 俯仰模組:PCB 正面朝立板,以 4 支 M2.5 公母銅柱 8 mm 連接 ——
    公頭穿過 PCB 鎖進模組銅柱,螺絲從立板外側鎖進母頭。馬達朝 +X 水平伸出。
-4. 相機支架:4 顆 M2.5 從支架外側鎖進俯仰馬達轉子面(Ø16);相機用 4 顆 M2 鎖在前板。
+4. 相機支架:4 顆 M2.5 從支架外側鎖進俯仰馬達轉子面(Ø16);前板背面埋 4 顆 M3 熱熔螺母,
+   相機用 4 顆 M3 × 6 從相機板背面鎖入。
 
 3D 列印考量:每件都有大平面貼床、懸空 <= 45°(內角圓角、補強肋、孔頂皆 45°)、
-水平大孔用水滴形、壁厚 >= 2.4 mm、M2.5 孔 Ø2.9 / M3 孔 Ø3.4 / M2 孔 Ø2.3。
+水平大孔用水滴形、壁厚 >= 2.4 mm、M2.5 孔 Ø2.9 / M3 孔 Ø3.4 / M3 熱熔螺母孔 Ø4.0 × 深 6。
 
 節點階層(three.js / Blender 可轉動):
     Gimbal_2axis
@@ -42,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from build_assembly import load_glb  # noqa: E402
 from build_glb import SMOOTH_ANGLE, gltf_arrays, srgb_to_linear  # noqa: E402
 from build_motor import box, cyl, polar, revolve, union  # noqa: E402
+from hardware import INSERT_M3, heat_insert, pan_screw, shade, standoff  # noqa: E402
 
 # ---------------- 模組尺寸(模組座標:PCB 背面 z=0、正面 z=2.54,馬達朝 -Z) ----------------
 MODULE_PCB_TOP = 2.54
@@ -50,7 +52,7 @@ MOUNT = [polar(9.5, a) for a in (0, 90, 180, 270)]        # PCB 安裝孔 = 模�
 ROTOR_HOLES = [polar(8.0, a) for a in (0, 90, 180, 270)]  # 轉子面 M2.5 孔(Ø16)
 
 # ---------------- 列印件與組裝尺寸(mm) ----------------
-M25, M3, M2 = 2.9, 3.4, 2.3     # 螺絲孔徑(含列印公差)
+M25, M3 = 2.9, 3.4               # 螺絲孔徑(含列印公差)
 FOOT_T = 4.0                    # 底板厚
 BOSS_H = 8.0                    # 凸柱高(PCB 正面零件最高約 3.5 mm)
 PCB_FACE_Z = FOOT_T + BOSS_H    # 水平模組 PCB 正面(朝下)的高度
@@ -69,6 +71,8 @@ PLATE_X0 = PLATE_X1 - 5.0                                 # 立板厚 5
 R_TILT = np.array([[0, 0, -1], [-1, 0, 0], [0, 1, 0]], float)  # 模組 -Z(馬達)-> 世界 +X
 TILT_PIVOT = np.array([0.0, 0.0, TILT_Z])
 CAM_X = 3.0                                               # 相機中心 X(避開支架內角圓角)
+CAM_HOLES = [(CAM_X + dx, TILT_Z + dz) for dx in (-12, 12) for dz in (-12, 12)]   # 相機板 4 孔(XZ)
+CAM_BOSS_R, CAM_BOSS_Y1 = 4.0, 25.0                       # 熱熔螺母螺絲柱:半徑、前端 Y
 
 C = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], float)   # Z-up -> glTF Y-up
 
@@ -77,40 +81,69 @@ PARTS = {
     'base': ('底座', '列印件', 1, 'base.stl · PLA 白'),
     'frame': ('框架(平台 + 立板)', '列印件', 1, 'frame.stl · PLA 白'),
     'camera_bracket': ('相機支架', '列印件', 1, 'camera_bracket.stl · PLA 白'),
-    'pan_module': ('水平模組(定子 + PCB)', '馬達模組', 1, 'PCB 正面朝下鎖在底座'),
-    'pan_rotor': ('水平馬達轉子', '馬達模組', 1, '帶動框架'),
-    'tilt_module': ('俯仰模組(定子 + PCB)', '馬達模組', 1, 'PCB 正面朝立板'),
-    'tilt_rotor': ('俯仰馬達轉子', '馬達模組', 1, '帶動相機支架'),
+    'pan_motor': ('水平馬達', '馬達', 1, '2804 雲台馬達(轉子與定子一體,不可拆);轉子帶動框架'),
+    'tilt_motor': ('俯仰馬達', '馬達', 1, '2804 雲台馬達(轉子與定子一體,不可拆);轉子帶動相機支架'),
+    'pan_pcb': ('水平 PCB', '電路板', 1, 'Ø40 驅動板,正面朝下鎖在底座凸柱'),
+    'tilt_pcb': ('俯仰 PCB', '電路板', 1, 'Ø40 驅動板,正面朝立板'),
     'camera': ('相機模組', '電子', 1, '30 × 30 mm 板 + M12 鏡頭(佔位)'),
-    'base_screws': ('底座螺絲', '五金', 4, 'M2.5 × 12 盤頭,從底面鎖進模組銅柱'),
-    'platform_screws': ('平台螺絲', '五金', 4, 'M2.5 盤頭,鎖進水平轉子面'),
-    'plate_screws': ('立板螺絲', '五金', 4, 'M2.5 盤頭,鎖進公母銅柱'),
-    'spacers': ('公母銅柱', '五金', 4, 'M2.5 × 8 mm'),
-    'bracket_screws': ('支架螺絲', '五金', 4, 'M2.5 盤頭,鎖進俯仰轉子面'),
-    'camera_screws': ('相機螺絲', '五金', 4, 'M2 盤頭'),
+    'pan_standoffs': ('水平模組銅柱', '五金', 4, 'M2.5 公母 6.5 mm,公頭鎖進馬達底部'),
+    'tilt_standoffs': ('俯仰模組銅柱', '五金', 4, 'M2.5 公母 6.5 mm,公頭鎖進馬達底部'),
+    'base_screws': ('底座螺絲', '五金', 4, 'M2.5 × 12 盤頭,從底面穿過凸柱、PCB 鎖進模組銅柱'),
+    'platform_screws': ('平台螺絲', '五金', 4, 'M2.5 × 5 盤頭,鎖進水平馬達轉子面'),
+    'plate_screws': ('立板螺絲', '五金', 4, 'M2.5 × 8 盤頭,鎖進間隔銅柱母牙'),
+    'spacers': ('間隔銅柱', '五金', 4, 'M2.5 公母 8 mm,公頭 6 mm 穿過 PCB 鎖進模組銅柱'),
+    'bracket_screws': ('支架螺絲', '五金', 4, 'M2.5 × 6 盤頭,鎖進俯仰馬達轉子面'),
+    'camera_screws': ('相機螺絲', '五金', 4, 'M3 × 6 盤頭,從相機板背面鎖進熱熔螺母'),
+    'camera_inserts': ('相機熱熔螺母', '五金', 4, 'M3 × 5 外徑 4.5 埋頭型,前板背面開 Ø4.0 × 深 6'),
 }
+# 模組(PCB + 銅柱 + 馬達)內部的爆炸位移,在模組座標(PCB 背面 z=0,馬達朝 -Z)
+MODULE_EXPLODE = {'pcb': (0, 0, 8), 'standoffs': (0, 0, 0), 'motor': (0, 0, -12)}
+MODULE_ROTOR = {'motor_rotor', 'shaft'}        # 會轉的部分:放在轉動群組下,但與定子算同一顆馬達
+
+
+def module_groups(names):
+    """模組網格名稱 -> {'pcb', 'standoffs', 'motor'}(轉子另外處理)。"""
+    out = {'pcb': [], 'standoffs': [], 'motor': []}
+    for n in names:
+        if n.startswith(('PCB_', 'parts_')) or n == 'solder':
+            out['pcb'].append(n)
+        elif n == 'brass':
+            out['standoffs'].append(n)
+        else:
+            out['motor'].append(n)               # 定子、出線
+    return out
+
+
+def rotor_explode(explode, module_key, R, group_key):
+    """轉子節點的爆炸位移:讓轉子與定子停在同一處。
+    定子淨位移 = 模組位移 + R·模組內馬達位移;轉子在轉動群組下,要扣掉群組本身的位移。
+    (兩者都沿轉動軸,群組轉動時仍成立)"""
+    net = np.array(explode.get(module_key, (0, 0, 0)), float) + R @ np.array(MODULE_EXPLODE['motor'], float)
+    return net - np.array(explode.get(group_key, (0, 0, 0)), float)
 # 爆炸圖位移(mm,Z 朝上,在父節點座標中):照組裝順序往外拆
 EXPLODE = {
     'base': (0, 0, -30), 'base_screws': (0, 0, -55), 'pan_module': (0, 0, 0),
     'pan_group': (0, 0, 35),                     # 水平轉動部分整組往上
-    'pan_rotor': (0, 0, -15),                    # 轉子落回定子方向,與平台分開
     'frame': (0, 0, 0), 'platform_screws': (0, 0, 20),
-    'tilt_module': (20, 0, 0), 'spacers': (9, 0, 0), 'plate_screws': (-15, 0, 0),
+    'tilt_module': (20, 0, 0), 'spacers': (6, 0, 0), 'plate_screws': (-15, 0, 0),
     'tilt_group': (45, 0, 0),                    # 相機那組沿俯仰軸往外
-    'tilt_rotor': (-15, 0, 0), 'camera_bracket': (0, 0, 0), 'bracket_screws': (15, 0, 0),
-    'camera': (0, -25, 0), 'camera_screws': (0, 15, 0),   # 相機板在前板後方,往支架內側拆
+    'camera_bracket': (0, 0, 0), 'bracket_screws': (15, 0, 0),
+    'camera': (0, -25, 0), 'camera_inserts': (0, -10, 0),   # 相機板在前板後方,往支架內側拆
+    'camera_screws': (0, -40, 0),
 }
 
 
-def make_extras(parts, explode, part=None, explode_key=None, **kw):
-    """glTF 節點的 extras(檢視頁用):part = 零件清單資料,explode = 爆炸位移(glTF 座標,公尺)。"""
+def make_extras(parts, explode, part=None, explode_key=None, explode_vec=None, pcs=None, **kw):
+    """glTF 節點的 extras(檢視頁用):part = 零件清單資料,explode = 爆炸位移(glTF 座標,公尺)。
+    explode_vec 直接給位移(mm,Z 朝上);pcs 覆寫件數(例如轉子節點記 0,與定子算同一顆馬達)。"""
     e = dict(kw)
     if part:
-        name, group, pcs, note = parts[part]
-        e['part'] = dict(id=part, name=name, group=group, pcs=pcs, note=note)
+        name, group, n, note = parts[part]
+        e['part'] = dict(id=part, name=name, group=group, pcs=n if pcs is None else pcs, note=note)
     key = explode_key or part
-    if key in explode:
-        e['explode'] = [round(float(v), 5) for v in C @ np.array(explode[key], float) / 1000]
+    vec = explode_vec if explode_vec is not None else explode.get(key)
+    if vec is not None:
+        e['explode'] = [round(float(v), 5) for v in C @ np.array(vec, float) / 1000]
     return e
 
 
@@ -136,14 +169,17 @@ def along_y(m):
     return m.rotate([-90, 0, 0])
 
 
-def hexagon(flats, h):
-    r = flats / np.sqrt(3)
-    return Manifold.cylinder(h, r, circular_segments=6).rotate([0, 0, 30])
-
-
 def rounded_rect(w, h, t, r):
     cs = CrossSection.square([w - 2 * r, h - 2 * r], center=True).offset(r, JoinType.Round, 2.0, 32)
     return cs.extrude(t)
+
+
+def teardrop_y(r, y0, length, x, z, tip):
+    """沿 Y 的水滴形(y ∈ [y0, y0 + length]);tip = +1 尖端朝 +X,-1 朝 -X。
+    相機支架以 -X 朝下列印:孔用 tip=+1(尖端朝上),外凸的螺絲柱用 tip=-1(尖端朝下)。"""
+    cs = CrossSection.batch_hull([CrossSection.circle(r, 48),
+                                  CrossSection.square([0.01, 0.01], center=True).translate([tip * r * np.sqrt(2), 0])])
+    return along_y(cs.extrude(length)).translate([x, y0, z])     # 平面 (u, v) -> 世界 (x, z = -v)
 
 
 def teardrop_x(r, x0, length, y, z):
@@ -169,16 +205,6 @@ def prism_y(tri_xz, y0, y1):
 
 def prism_z(tri_xy, z0, z1):
     return CrossSection([ccw(tri_xy)]).extrude(z1 - z0).translate([0, 0, z0])
-
-
-def pan_head(d, h):
-    """十字盤頭螺絲頭(頭頂朝 +Z,座面 z=0)。"""
-    r = d / 2
-    head = revolve([(0, 0), (r, 0), (r, h * 0.55), (r * 0.8, h * 0.9), (r * 0.5, h), (0, h)])
-    s = 0.5
-    cross = union([box(-r * 0.55, r * 0.55, -s / 2, s / 2, h * 0.45, h + 1),
-                   box(-s / 2, s / 2, -r * 0.55, r * 0.55, h * 0.45, h + 1)])
-    return head - cross
 
 
 def tilt_world(p_module):
@@ -212,7 +238,7 @@ def base_screws():
     heads = []
     for m in MOUNT:
         x, y, _ = pan_world([*m, 0])
-        heads.append(pan_head(4.5, 1.7).mirror([0, 0, 1]).translate([x, y, 6.0]))
+        heads.append(pan_screw(2.5, 12, 4.5, 1.7).mirror([0, 0, 1]).translate([x, y, 6.0]))   # 螺桿往上
     return union(heads)
 
 
@@ -245,12 +271,13 @@ def make_frame():
 
 def frame_hardware():
     """回傳 {零件 id: (manifold, 材質)}。"""
-    platform = [pan_head(4.5, 1.5).translate([x, y, PLATFORM_TOP - 2.0]) for x, y in ROTOR_HOLES]
+    platform = [pan_screw(2.5, 5, 4.5, 1.5).translate([x, y, PLATFORM_TOP - 2.0]) for x, y in ROTOR_HOLES]
     standoffs, plate = [], []
     for m in MOUNT:
         wx, wy, wz = tilt_world([*m, MODULE_PCB_TOP])
-        standoffs.append(along_x(hexagon(4.0, SPACER)).mirror([1, 0, 0]).translate([wx, wy, wz]))  # 往 -X 到立板
-        plate.append(along_x(pan_head(4.5, 1.5)).mirror([1, 0, 0]).translate([PLATE_X0 + 1.5, wy, wz]))
+        # 公母銅柱:母端在立板,本體到 PCB 正面,公頭穿過 PCB 鎖進模組銅柱
+        standoffs.append(along_x(standoff(2.5, SPACER, stud=6.0)).mirror([1, 0, 0]).translate([wx - SPACER, wy, wz]))
+        plate.append(along_x(pan_screw(2.5, 8, 4.5, 1.5)).mirror([1, 0, 0]).translate([PLATE_X0 + 1.5, wy, wz]))
     return {'platform_screws': (union(platform), 'screw'), 'plate_screws': (union(plate), 'screw'),
             'spacers': (union(standoffs), 'brass')}
 
@@ -274,25 +301,30 @@ def make_camera_bracket():
     hole = CrossSection([[(CAM_X - 7.5, -7.5), (CAM_X + 7.5, -7.5), (CAM_X + 15.0, 0.0),
                           (CAM_X + 7.5, 7.5), (CAM_X - 7.5, 7.5)]])
     cuts.append(hole.extrude(10).rotate([90, 0, 0]).translate([0, yf1 + 3, zc]))   # (u,v,w)->(u,-w,v)
-    for dx in (-12, 12):
-        for dz in (-12, 12):
-            cuts.append(along_y(cyl(M2 / 2, 10, seg=24)).translate([CAM_X + dx, yf0 - 2, zc + dz]))
-    return (flange + front + fillet + union(gussets)) - union(cuts)
+    # 前板正面 4 個水滴形螺絲柱,背面開熱熔螺母孔(前板只有 3.2 mm,埋不進 6 mm 深的螺母)
+    bosses = []
+    for x, z in CAM_HOLES:
+        bosses.append(teardrop_y(CAM_BOSS_R, yf1 - 0.01, CAM_BOSS_Y1 - yf1 + 0.01, x, z, -1))
+        cuts.append(teardrop_y(INSERT_M3['hole_d'] / 2, yf0 - 1, INSERT_M3['hole_depth'] + 1, x, z, +1))
+    return (flange + front + fillet + union(gussets) + union(bosses)) - union(cuts)
 
 
 def camera_parts():
     zc, p = TILT_Z, {}
-    p['cam_pcb'] = box(CAM_X - 15, CAM_X + 15, 16.4, 18.0, zc - 15, zc + 15)
+    p['cam_pcb'] = box(CAM_X - 15, CAM_X + 15, 16.4, 18.0, zc - 15, zc + 15) - union(
+        [along_y(cyl(1.6, 4, seg=24)).translate([x, 15.0, z]) for x, z in CAM_HOLES])   # M3 孔
     p['cam_holder'] = box(CAM_X - 7, CAM_X + 7, 18.0, 25.0, zc - 7, zc + 7)
     p['lens_barrel'] = along_y(cyl(6.0, 9.0)).translate([CAM_X, 25.0, zc]) - \
         along_y(cyl(4.5, 2.0)).translate([CAM_X, 33.2, zc])
     p['lens_glass'] = along_y(cyl(4.5, 0.6)).translate([CAM_X, 33.0, zc])
-    cam_heads = [along_y(pan_head(3.8, 1.3)).translate([CAM_X + dx, 21.2, zc + dz])
-                 for dx in (-12, 12) for dz in (-12, 12)]
+    # M3 × 6:頭在相機板背面(朝 -Y),穿過相機板鎖進前板的熱熔螺母;螺母頂面與前板背面齊平
+    cam_heads = [along_y(pan_screw(3.0, 6, 5.5, 1.8)).mirror([0, 1, 0]).translate([x, 16.4, z]) for x, z in CAM_HOLES]
+    inserts = [along_y(heat_insert()).mirror([0, 1, 0]).translate([x, 18.0, z]) for x, z in CAM_HOLES]
     rotor_heads = []
     for v in ROTOR_HOLES:
         _, wy, wz = tilt_world([*v, MODULE_ROTOR_Z])
-        rotor_heads.append(along_x(pan_head(4.5, 1.5)).translate([ROTOR_X + 4.0, wy, wz]))
+        rotor_heads.append(along_x(pan_screw(2.5, 6, 4.5, 1.5)).translate([ROTOR_X + 4.0, wy, wz]))
+    p['camera_inserts'] = union(inserts)
     p['camera_screws'] = union(cam_heads)
     p['bracket_screws'] = union(rotor_heads)
     return p
@@ -346,7 +378,7 @@ def main():
     nodes = g.j['nodes']
     module_nodes = list(nodes[0]['children'])
     by_name = {nodes[i]['name']: i for i in module_nodes}
-    rotor_names = {'motor_rotor', 'shaft'}
+    rotor_names = MODULE_ROTOR
     skip = {'screws'}           # 模組正面原本的短螺絲 -> 改由底座長螺絲 / 公母銅柱取代
     nodes[0]['children'] = []
     mat_cache = {}
@@ -369,15 +401,26 @@ def main():
 
     def add_mesh(name, man, key, parent, offset_mm=np.zeros(3), part=None):
         mesh = to_trimesh(man, offset_mm)
-        pos, nrm, idx = gltf_arrays(trimesh.graph.smooth_shade(mesh, angle=SMOOTH_ANGLE))
+        pos, nrm, idx = gltf_arrays(shade(mesh, key, SMOOTH_ANGLE))
         g.mesh(name, pos, nrm, idx, material(key))
         nodes[0]['children'].pop()
         nodes[parent].setdefault('children', []).append(len(nodes) - 1)
         if part:
             nodes[-1]['extras'] = extras(part)
 
-    def module_copy(prefix, names, parent, matrix, part=None):
-        holder = add_node(dict(name=prefix, matrix=matrix, **({'extras': extras(part)} if part else {})), parent)
+    def module_copy(prefix, names, parent, matrix, role):
+        """模組(轉子以外)拆成 PCB / 銅柱 / 馬達三個零件;role = pan / tilt。"""
+        holder = add_node(dict(name=prefix, matrix=matrix, extras=extras(explode_key=f'{role}_module')), parent)
+        for sub, members in module_groups(names).items():
+            sub_node = add_node(dict(name=f'{prefix}_{sub}', extras=extras(
+                f'{role}_{sub}', explode_vec=MODULE_EXPLODE[sub])), holder)
+            for n in members:
+                add_node(dict(name=f'{prefix}_{n}', mesh=nodes[by_name[n]]['mesh']), sub_node)
+
+    def rotor_copy(prefix, names, parent, matrix, role, R, group_key):
+        """轉子:與定子同一個零件(件數記 0),爆炸時補償群組位移,與定子停在一起。"""
+        holder = add_node(dict(name=prefix, matrix=matrix, extras=extras(
+            f'{role}_motor', pcs=0, explode_vec=rotor_explode(EXPLODE, f'{role}_module', R, group_key))), parent)
         for n in names:
             add_node(dict(name=f'{prefix}_{n}', mesh=nodes[by_name[n]]['mesh']), holder)
 
@@ -390,10 +433,11 @@ def main():
 
     rest = [n for n in by_name if n not in rotor_names | skip]
     rotor = [n for n in by_name if n in rotor_names]
-    module_copy('pan_module', rest, base, gltf_matrix(R_PAN, PAN_T), 'pan_module')          # 定子 + PCB 固定
-    module_copy('pan_module_rotor', rotor, pan, gltf_matrix(R_PAN, PAN_T), 'pan_rotor')     # 轉子帶動上方
-    module_copy('tilt_module', rest, pan, gltf_matrix(R_TILT, TILT_T), 'tilt_module')
-    module_copy('tilt_module_rotor', rotor, tilt, gltf_matrix(R_TILT, TILT_T - TILT_PIVOT), 'tilt_rotor')
+    module_copy('pan_module', rest, base, gltf_matrix(R_PAN, PAN_T), 'pan')                  # 定子 + PCB 固定
+    rotor_copy('pan_module_rotor', rotor, pan, gltf_matrix(R_PAN, PAN_T), 'pan', R_PAN, 'pan_group')   # 轉子帶動上方
+    module_copy('tilt_module', rest, pan, gltf_matrix(R_TILT, TILT_T), 'tilt')
+    rotor_copy('tilt_module_rotor', rotor, tilt, gltf_matrix(R_TILT, TILT_T - TILT_PIVOT), 'tilt', R_TILT,
+               'tilt_group')
 
     printed = {'base': make_base(), 'frame': make_frame(), 'camera_bracket': make_camera_bracket()}
     add_mesh('print_base', printed['base'], 'print_white', base, part='base')
@@ -404,8 +448,8 @@ def main():
     add_mesh('print_camera_bracket', printed['camera_bracket'], 'print_white', tilt, TILT_PIVOT, part='camera_bracket')
     camera = add_node(dict(name='camera', extras=extras('camera')), tilt)   # 相機 4 個網格包成一個零件
     for key, man in camera_parts().items():
-        if key.endswith('_screws'):
-            add_mesh(f'camera_{key}', man, 'screw', tilt, TILT_PIVOT, part=key)
+        if key.endswith(('_screws', '_inserts')):
+            add_mesh(f'camera_{key}', man, 'brass' if key.endswith('_inserts') else 'screw', tilt, TILT_PIVOT, part=key)
         else:
             add_mesh(f'camera_{key}', man, key, camera, TILT_PIVOT)
 

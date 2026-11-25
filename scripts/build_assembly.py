@@ -10,7 +10,8 @@
 座標(mm,Z 朝上):原點 = PCB 中心、PCB 背面高度;正面在 z = 2.54。
 - PCB 的 4 個 NPTH 安裝孔 (0, ±9.5)、(±9.5, 0) 正好是 M2.5、孔位圓 Ø19,
   與馬達底部螺孔相同 -> 馬達翻轉朝下並轉 45° 對孔
-- 銅柱 z = -6.5 ~ 0,正面以 M2.5 盤頭螺絲鎖住
+- M2.5 公母銅柱 6.5 mm(z = -6.5 ~ 0),公頭 3 mm 鎖進馬達底部螺孔;
+  正面以 M2.5 × 6 盤頭螺絲穿過 PCB 鎖進銅柱母牙
 - U/V/W 焊墊位置由背面貼圖(Gerber 產生)自動找出
 """
 import json
@@ -27,6 +28,7 @@ from scipy import ndimage
 sys.path.insert(0, str(Path(__file__).parent))
 from build_glb import GLB, SMOOTH_ANGLE, TEX_HALF_MM, gltf_arrays, srgb_to_linear  # noqa: E402
 from build_motor import MATERIALS, capsule_path, cyl, motor_parts, polar, union  # noqa: E402
+from hardware import pan_screw, shade, standoff  # noqa: E402
 
 BOARD_T = 2.54            # PCB 厚度(與 OBJ 相同)
 STANDOFF = 6.5
@@ -77,21 +79,6 @@ def find_uvw_pads(tex_path):
 def place_motor(m):
     """馬達座標 -> 板子座標:繞 X 翻轉 180°、繞 Z 轉 45°、往下移 6.5 mm。"""
     return m.rotate([180, 0, 0]).rotate([0, 0, MOTOR_ROT]).translate([0, 0, -STANDOFF])
-
-
-def pan_head_top(x, y, d=4.5, h=1.5):
-    from build_motor import revolve, box
-    r = d / 2
-    head = revolve([(0, 0), (r, 0), (r, h * 0.55), (r * 0.8, h * 0.9), (r * 0.5, h), (0, h)])
-    s = 0.5
-    cross = union([box(-r * 0.55, r * 0.55, -s / 2, s / 2, h * 0.45, h + 1),
-                   box(-s / 2, s / 2, -r * 0.55, r * 0.55, h * 0.45, h + 1)])
-    return (head - cross).translate([x, y, BOARD_T])
-
-
-def hexagon(flats, h, z0, x, y):
-    r = flats / np.sqrt(3)
-    return Manifold.cylinder(h, r, circular_segments=6).rotate([0, 0, 30]).translate([x, y, z0])
 
 
 def wires_to_pads(pads):
@@ -148,8 +135,8 @@ def main():
 
     holes = [polar(MOUNT_R, a) for a in (0, 90, 180, 270)]
     parts = {k: place_motor(v) for k, v in motor_parts().items()}
-    parts['brass'] = union([hexagon(4.0, STANDOFF, -STANDOFF, x, y) for x, y in holes])
-    parts['screws'] = union([pan_head_top(x, y) for x, y in holes])
+    parts['brass'] = union([standoff(2.5, STANDOFF, stud=3.0).translate([x, y, 0]) for x, y in holes])
+    parts['screws'] = union([pan_screw(2.5, 6.0, 4.5, 1.5).translate([x, y, BOARD_T]) for x, y in holes])
     parts.update(wires_to_pads(pads))
 
     mats = {**MATERIALS, **EXTRA_MATERIALS}
@@ -159,7 +146,7 @@ def main():
         mat = g.material(dict(name=name, pbrMetallicRoughness=dict(
             baseColorFactor=[*srgb_to_linear(srgb).tolist(), 1.0],
             metallicFactor=metal, roughnessFactor=rough)))
-        pos, nrm, idx = gltf_arrays(trimesh.graph.smooth_shade(mesh, angle=SMOOTH_ANGLE))
+        pos, nrm, idx = gltf_arrays(shade(mesh, name, SMOOTH_ANGLE))
         g.mesh(name, pos, nrm, idx, mat)
         print(f'{name:13} 三角形 {len(mesh.faces):6}')
 

@@ -235,11 +235,11 @@ const MODELS = {
   car: {
     file: 'car_swerve.gltf.json', title: '舵輪平台車(8 × 2804 模組)',
     specs: [['驅動', '4 × 輪轂直驅,輪 Ø64'], ['轉向', '4 × 舵輪,可 360° 轉'], ['車身', '250 × 200 mm'],
-            ['總高', '109 mm'], ['連接', 'M2.5 銅柱 8 mm、橋架'], ['頂部', '預留雙軸雲台孔位']],
+            ['總高', '190 mm(含防水盒)'], ['連接', 'M2.5 銅柱 8 mm、橋架'], ['頂部', 'RS PRO 防水盒(放置)']],
   },
   assembly: {
     file: 'pcb_motor_assembly.gltf.json', title: 'PCB + 2804 馬達組合',
-    specs: [['安裝面', 'PCB 背面'], ['銅柱', '4 × M2.5 六角 6.5 mm'], ['螺絲', '4 × M2.5 盤頭(正面)'],
+    specs: [['安裝面', 'PCB 背面'], ['銅柱', '4 × M2.5 公母 6.5 mm'], ['螺絲', '4 × M2.5 × 6 盤頭(正面)'],
             ['孔位', 'Ø19,與板上安裝孔對齊'], ['出線', '焊到 U / V / W 焊墊'], ['總高', '約 25.5 mm']],
   },
 };
@@ -387,12 +387,13 @@ function stepCar() {
 }
 
 // ---- 爆炸圖與零件拆分:資料來自 glTF extras(three.js 的 userData)----
-//   part    = { id, name, group, pcs, note }:同 id 的節點是同一種零件(例如四個角的轉向叉)
+//   part    = { id, name, group, pcs, note }:同 id 的節點是同一種零件(例如四個角的轉向叉);
+//             pcs = 這個節點算幾件(馬達的轉子節點記 0,選取時與定子一起)
 //   explode = [x, y, z]:爆炸圖 100% 時在父節點座標中的位移(公尺)
 const explodeBox = document.getElementById('explode-box'), explodeIn = document.getElementById('explode');
 const partsEl = document.getElementById('parts'), partsList = document.getElementById('parts-list');
 const pickEl = document.getElementById('pick');
-const GROUP_ORDER = ['列印件', '馬達模組', '電子', '五金'];
+const GROUP_ORDER = ['列印件', '馬達', '電路板', '電子', '外購件', '五金'];
 let explodeNodes = [], parts = new Map(), selected = null;
 const ghostCache = new Map();
 function ghostOf(mat) {   // 未選取的零件改用半透明材質
@@ -446,7 +447,8 @@ function buildParts(root) {
     parts.get(p.id).nodes.push(o);
   });
   let total = 0;
-  for (const p of parts.values()) { p.qty = p.nodes.length * (p.pcs || 1); total += p.qty; }
+  // 每個節點的件數加總;轉子節點記 0(與定子同一顆馬達)
+  for (const p of parts.values()) { p.qty = p.nodes.reduce((a, n) => a + (n.userData.part.pcs === undefined ? 1 : n.userData.part.pcs), 0); total += p.qty; }
   const groups = [...new Set([...parts.values()].map((p) => p.group))]
     .sort((a, b) => (GROUP_ORDER.indexOf(a) + 99) % 99 - (GROUP_ORDER.indexOf(b) + 99) % 99);
   partsList.replaceChildren(...groups.flatMap((g) => {

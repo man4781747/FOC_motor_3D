@@ -23,7 +23,8 @@ import cadquery as cq
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-from build_gimbal import (CAM_X, FOOT_T, M2, M3, M25, MODULE_PCB_TOP, MODULE_ROTOR_Z, MOUNT,  # noqa: E402
+from build_gimbal import (CAM_BOSS_R, CAM_BOSS_Y1, CAM_HOLES, CAM_X, FOOT_T, M3, M25, MODULE_PCB_TOP,  # noqa: E402
+                          MODULE_ROTOR_Z, MOUNT,
                           PCB_FACE_Z, PLATE_X0, PLATE_X1, PLATFORM_T, PLATFORM_TOP, PLATFORM_Z0,
                           ROTOR_HOLES, ROTOR_X, TILT_Z, pan_world, polar, tilt_world)
 
@@ -68,6 +69,15 @@ def teardrop_x(r, x0, length, y, z):
     s = r / np.sqrt(2)
     wp = (cq.Workplane('YZ', origin=(x0, y, z))        # 區域座標 (u, v) = 世界 (Y, Z)
           .moveTo(s, s).threePointArc((0, -r), (-s, s)).lineTo(0, r * np.sqrt(2)).close())
+    return wp.extrude(length).val()
+
+
+def teardrop_y(r, y0, length, x, z, tip):
+    """沿 Y 的水滴形,y ∈ [y0, y0 + length];tip = +1 尖端朝 +X,-1 朝 -X(同 build_gimbal.teardrop_y)。"""
+    s = r / np.sqrt(2)
+    wp = (cq.Workplane('XZ', origin=(0, y0 + length, 0))       # 區域座標 (u, v) = 世界 (X, Z),往 -Y 擠出
+          .moveTo(x + tip * s, z + s).threePointArc((x - tip * r, z), (x + tip * s, z - s))
+          .lineTo(x + tip * r * np.sqrt(2), z).close())
     return wp.extrude(length).val()
 
 
@@ -149,10 +159,13 @@ def make_camera_bracket():
     # 鏡頭座方孔:列印時朝上的一側(+X)做 45° 尖頂;XZ 平面的五邊形沿 -Y 擠出,y ∈ [yf1 - 7, yf1 + 3]
     hole = [(CAM_X - 7.5, -7.5), (CAM_X + 7.5, -7.5), (CAM_X + 15.0, 0.0), (CAM_X + 7.5, 7.5), (CAM_X - 7.5, 7.5)]
     cuts.append(cq.Workplane('XZ', origin=(0, yf1 + 3, zc)).polyline(hole).close().extrude(10).val())
-    for dx in (-12, 12):
-        for dz in (-12, 12):
-            cuts.append(cyl_y(M2 / 2, 10, CAM_X + dx, yf0 - 2, zc + dz))
-    return finish(fuse(flange, front, fillet, *gussets), cuts)
+    # 前板正面 4 個水滴形螺絲柱,背面開 M3 熱熔螺母孔
+    from hardware import INSERT_M3
+    bosses = []
+    for x, z in CAM_HOLES:
+        bosses.append(teardrop_y(CAM_BOSS_R, yf1 - 0.01, CAM_BOSS_Y1 - yf1 + 0.01, x, z, -1))
+        cuts.append(teardrop_y(INSERT_M3['hole_d'] / 2, yf0 - 1, INSERT_M3['hole_depth'] + 1, x, z, +1))
+    return finish(fuse(flange, front, fillet, *gussets, *bosses), cuts)
 
 
 PARTS = {'base': make_base, 'frame': make_frame, 'camera_bracket': make_camera_bracket}
@@ -176,7 +189,7 @@ def compare(name, shape):
     assert not m.is_empty(), f'{name}:細分後的網格不是封閉實體({m.status()})'
     diff = (m - ref).volume() + (ref - m).volume()
     # 最大表面偏差:兩邊表面互相取樣量距離。多邊形近似圓的誤差約 0.01 mm,
-    # 少一個孔或尺寸不同會是 mm 等級(只看體積的話,少一個 M2 孔才差 0.15%,容易漏掉)
+    # 少一個孔或尺寸不同會是 mm 等級(只看體積的話,少一個 Ø2.3 小孔才差 0.15%,容易漏掉)
     rg = ref.to_mesh()
     tr = trimesh.Trimesh(np.asarray(rg.vert_properties)[:, :3], np.asarray(rg.tri_verts))
     dev = 0.0
