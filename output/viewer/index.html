@@ -1,0 +1,293 @@
+<meta charset="utf-8">
+<title>小型獨立運作系統 PCB</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* 版面:整頁是 3D 舞台,左上角一張規格卡,底部一排視角按鈕 */
+  :root {
+    --stage: #e9edf3;          /* 舞台背景:帶一點防焊藍的淺灰 */
+    --panel: rgba(255, 255, 255, 0.86);
+    --ink: #142038;
+    --muted: #5a6680;
+    --line: rgba(20, 32, 56, 0.14);
+    --accent: #1d3a8a;         /* 防焊藍 */
+    --gold: #b8892c;           /* 沉金 */
+    --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  /* 固定淺色主題,不跟隨系統深色模式 */
+  :root { color-scheme: light; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    background: var(--stage); color: var(--ink); font-family: var(--font-body);
+    overflow: hidden; position: relative;
+  }
+  #stage { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
+
+  .spec {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 16px);
+    left: max(16px, env(safe-area-inset-left, 0px));
+    max-width: min(320px, calc(100% - 32px));
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; backdrop-filter: blur(8px);
+    display: grid; gap: 10px;
+  }
+  .spec h1 { margin: 0; font-size: 1.05rem; font-weight: 700; text-wrap: balance; letter-spacing: 0.02em; }
+  .spec dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 0.8rem; }
+  .spec dt { color: var(--muted); }
+  .spec dd { margin: 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .models { display: flex; gap: 4px; padding: 3px; background: var(--line); border-radius: 8px; }
+  .models button {
+    flex: 1; font: 500 0.82rem var(--font-body); color: var(--ink); background: transparent;
+    border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap;
+  }
+  .models button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+  .models button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .spec .hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
+
+  .views {
+    position: absolute;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+    left: 50%; transform: translateX(-50%);
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px; backdrop-filter: blur(8px);
+    max-width: calc(100% - 32px);
+  }
+  .views button {
+    font: 500 0.85rem var(--font-body); color: var(--ink); background: transparent;
+    border: 0; border-radius: 999px; padding: 8px 14px; cursor: pointer;
+  }
+  .views button:hover { background: var(--line); }
+  .views button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .views button[aria-pressed="true"] { background: var(--accent); color: var(--stage); }
+
+  .status {
+    position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+    font-family: var(--font-mono); font-size: 0.9rem; color: var(--muted);
+  }
+  .status .bar { width: 180px; height: 3px; background: var(--line); border-radius: 2px; margin-top: 10px; overflow: hidden; }
+  .status .bar i { display: block; height: 100%; width: 0; background: var(--gold); transition: width 0.2s; }
+  @media (max-width: 480px) {
+    .spec { padding: 10px 12px; }
+    .spec dl { font-size: 0.75rem; }
+    .views button { padding: 7px 10px; font-size: 0.8rem; }
+  }
+</style>
+
+<canvas id="stage" aria-label="3D 模型,可拖曳旋轉、滾輪縮放"></canvas>
+
+<section class="spec">
+  <div class="models" role="group" aria-label="模型">
+    <button id="m-pcb" type="button" aria-pressed="true">PCB</button>
+    <button id="m-motor" type="button" aria-pressed="false">2804 馬達</button>
+    <button id="m-assembly" type="button" aria-pressed="false">組合</button>
+  </div>
+  <h1 id="spec-title">小型獨立運作系統 PCB</h1>
+  <dl id="spec-list"></dl>
+  <p class="hint">拖曳自由旋轉 · 滾輪/雙指縮放 · 右鍵平移</p>
+</section>
+
+<nav class="views" aria-label="視角">
+  <button id="v-iso" type="button">斜視</button>
+  <button id="v-top" type="button">正面</button>
+  <button id="v-bottom" type="button">背面</button>
+  <button id="v-side" type="button">側視</button>
+  <button id="v-spin" type="button" aria-pressed="false">自動旋轉</button>
+</nav>
+
+<div class="status" id="status"><div><span id="status-text">載入模型中…</span><div class="bar"><i id="bar"></i></div></div></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const canvas = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(0.05, 0.12, 0.08);
+scene.add(sun);
+
+// 模型單位是公尺
+const camera = new THREE.PerspectiveCamera(35, 1, 0.001, 5);
+// TrackballControls:可往任何方向自由翻轉,不受 ±90° 限制
+const controls = new TrackballControls(camera, canvas);
+controls.rotateSpeed = 3.0;
+controls.zoomSpeed = 1.2;
+controls.panSpeed = 0.8;
+controls.dynamicDampingFactor = 0.15;
+controls.minDistance = 0.02;
+controls.maxDistance = 0.4;
+
+const MODELS = {
+  pcb: {
+    file: 'pcb.gltf.json', title: '小型獨立運作系統 PCB',
+    specs: [['外形', '圓形 Ø40 mm'], ['板厚', '2.54 mm'], ['層數', '4 層'], ['主控', 'LQFP64 10×10']],
+  },
+  motor: {
+    file: 'motor_2804.gltf.json', title: '2804 雲台無刷馬達',
+    specs: [['外形', 'Ø34.5 × 15 mm'], ['中空軸', 'Ø6.5 mm'], ['頂部螺孔', '4 × M2.5 @ Ø16'],
+            ['底部螺孔', '4 × M2.5 @ Ø19'], ['極對數', '7 (12N14P)'], ['KV', '220 KV']],
+  },
+  assembly: {
+    file: 'pcb_motor_assembly.gltf.json', title: 'PCB + 2804 馬達組合',
+    specs: [['安裝面', 'PCB 背面'], ['銅柱', '4 × M2.5 六角 6.5 mm'], ['螺絲', '4 × M2.5 盤頭(正面)'],
+            ['孔位', 'Ø19,與板上安裝孔對齊'], ['出線', '焊到 U / V / W 焊墊'], ['總高', '約 25.5 mm']],
+  },
+};
+// 視角方向(相對模型中心),距離依模型大小計算
+const DIRS = { iso: [0, 1, 1], top: [0, 1, 0], bottom: [0, -1, 0], side: [0, 0.15, 1] };
+// 各視角的畫面「上方」方向(正視/背視時改用 -Z / +Z 才不會退化)
+const UPS = { iso: [0, 1, 0], top: [0, 0, -1], bottom: [0, 0, 1], side: [0, 1, 0] };
+const center = new THREE.Vector3();
+let radius = 0.03;
+
+function viewPos(name) {
+  const d = new THREE.Vector3(...DIRS[name]).normalize();
+  return d.multiplyScalar(radius * 3.4).add(center);
+}
+let tween = null;
+function goTo(name, instant = false) {
+  const from = camera.position.clone();
+  const to = viewPos(name);
+  const fromT = controls.target.clone();
+  const fromUp = camera.up.clone();
+  const toUp = new THREE.Vector3(...UPS[name]);
+  const t0 = performance.now();
+  const reduce = instant || matchMedia('(prefers-reduced-motion: reduce)').matches;
+  tween = (now) => {
+    const k = reduce ? 1 : Math.min(1, (now - t0) / 600);
+    const e = 1 - Math.pow(1 - k, 3);
+    camera.position.lerpVectors(from, to, e);
+    controls.target.lerpVectors(fromT, center, e);
+    camera.up.lerpVectors(fromUp, toUp, e);
+    if (camera.up.lengthSq() < 1e-6) camera.up.copy(toUp);
+    camera.up.normalize();
+    if (k >= 1) tween = null;
+  };
+}
+
+for (const name of ['iso', 'top', 'bottom', 'side']) {
+  document.getElementById('v-' + name).addEventListener('click', () => goTo(name));
+}
+const spinBtn = document.getElementById('v-spin');
+let spinning = false;
+spinBtn.addEventListener('click', () => {
+  spinning = !spinning;
+  spinBtn.setAttribute('aria-pressed', String(spinning));
+});
+const spinOffset = new THREE.Vector3();
+function spin() {  // 繞目前畫面的上方軸轉動相機
+  spinOffset.subVectors(camera.position, controls.target).applyAxisAngle(camera.up, 0.006);
+  camera.position.copy(controls.target).add(spinOffset);
+}
+
+function syncBackground() {
+  const c = getComputedStyle(document.documentElement).getPropertyValue('--stage').trim();
+  scene.background = new THREE.Color(c || '#e9edf3');
+}
+syncBackground();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncBackground);
+new MutationObserver(syncBackground).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+function resize() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(h, 1);
+  // 窄螢幕時把鏡頭拉遠,讓整塊板子留在畫面內
+  camera.fov = camera.aspect < 1 ? 35 / Math.max(camera.aspect, 0.5) : 35;
+  camera.updateProjectionMatrix();
+  controls.handleResize();
+}
+window.addEventListener('resize', resize);
+resize();
+
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('status-text');
+const bar = document.getElementById('bar');
+const loader = new GLTFLoader();
+const cache = {};
+let current = null, loadToken = 0;
+
+function showSpecs(key) {
+  const m = MODELS[key];
+  document.getElementById('spec-title').textContent = m.title;
+  const dl = document.getElementById('spec-list');
+  dl.replaceChildren(...m.specs.flatMap(([k, v]) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v;
+    return [dt, dd];
+  }));
+  for (const id of Object.keys(MODELS)) {
+    document.getElementById('m-' + id).setAttribute('aria-pressed', String(id === key));
+  }
+}
+
+function place(key, root) {
+  if (current) scene.remove(current);
+  current = root;
+  scene.add(root);
+  const box = new THREE.Box3().setFromObject(root);
+  box.getCenter(center);
+  radius = box.getSize(new THREE.Vector3()).length() / 2;
+  goTo('iso', true);
+  statusEl.hidden = true;
+}
+
+function load(key) {
+  showSpecs(key);
+  const token = ++loadToken;
+  if (cache[key]) { place(key, cache[key]); return; }
+  statusEl.hidden = false;
+  statusText.textContent = '載入模型中…';
+  bar.parentElement.hidden = false;
+  bar.style.width = '0';
+  loader.load(MODELS[key].file, (gltf) => {
+    gltf.scene.traverse((o) => {
+      if (o.isMesh && o.material.map) o.material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    });
+    cache[key] = gltf.scene;
+    if (token === loadToken) place(key, gltf.scene);
+  }, (ev) => {
+    if (ev.total && token === loadToken) bar.style.width = (100 * ev.loaded / ev.total).toFixed(0) + '%';
+  }, (err) => {
+    if (token !== loadToken) return;
+    statusText.textContent = '模型載入失敗:' + (err.message || err) + '。請重新整理頁面再試一次。';
+    bar.parentElement.hidden = true;
+  });
+}
+
+function fromHash() { const k = location.hash.slice(1); return k in MODELS ? k : 'pcb'; }
+for (const key of Object.keys(MODELS)) {
+  document.getElementById('m-' + key).addEventListener('click', () => {
+    if (fromHash() !== key) location.hash = key; else load(key);
+  });
+}
+window.addEventListener('hashchange', () => load(fromHash()));
+load(fromHash());
+
+renderer.setAnimationLoop((now) => {
+  if (tween) tween(now);
+  else if (spinning) spin();
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
