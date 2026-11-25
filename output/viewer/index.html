@@ -57,6 +57,39 @@
   .axes .mode button[aria-pressed="true"] { background: var(--accent); color: #fff; }
   .axes input:disabled { opacity: 0.4; }
   .spec .hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
+  .spec { max-height: calc(100% - 110px); overflow-y: auto; }
+
+  /* 零件拆分清單 */
+  .parts { border-top: 1px solid var(--line); padding-top: 6px; font-size: 0.8rem; }
+  .parts summary { cursor: pointer; font-weight: 500; padding: 2px 0; }
+  .parts summary span { color: var(--muted); font-family: var(--font-mono); font-size: 0.75rem; }
+  .parts .tools { display: flex; gap: 6px; margin: 6px 0; }
+  .parts .tools button { font: 500 0.75rem var(--font-body); color: var(--ink); background: var(--line);
+    border: 0; border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+  .parts h2 { margin: 8px 0 2px; font-size: 0.72rem; font-weight: 500; color: var(--muted); letter-spacing: 0.05em; }
+  .part-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; }
+  .part-row input { margin: 0; accent-color: var(--accent); }
+  .part-row button { text-align: left; font: 400 0.8rem var(--font-body); color: var(--ink); background: transparent;
+    border: 0; border-radius: 5px; padding: 3px 6px; cursor: pointer; }
+  .part-row button:hover { background: var(--line); }
+  .part-row button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .part-row .qty { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); }
+  .parts button:focus-visible, .parts summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* 選取零件的資訊卡 */
+  .pick {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 16px);
+    right: max(16px, env(safe-area-inset-right, 0px));
+    max-width: min(260px, calc(100% - 32px));
+    background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(8px);
+    display: grid; gap: 3px; font-size: 0.8rem;
+  }
+  .pick strong { font-size: 0.95rem; }
+  .pick .meta { color: var(--muted); font-family: var(--font-mono); font-size: 0.75rem; }
+  .pick button { justify-self: start; margin-top: 4px; font: 500 0.75rem var(--font-body); color: var(--ink);
+    background: var(--line); border: 0; border-radius: 6px; padding: 4px 9px; cursor: pointer; }
 
   .views {
     position: absolute;
@@ -117,8 +150,26 @@
       <button id="car-reset" type="button">歸零</button>
     </div>
   </div>
-  <p class="hint">拖曳自由旋轉 · 滾輪/雙指縮放 · 右鍵平移</p>
+  <div class="axes" id="explode-box" hidden>
+    <label for="explode">爆炸圖<input id="explode" type="range" min="0" max="100" step="1" value="0"><output id="explode-out">0%</output></label>
+  </div>
+  <details class="parts" id="parts" hidden>
+    <summary>零件拆分 <span id="parts-count"></span></summary>
+    <div class="tools">
+      <button id="parts-show-all" type="button">全部顯示</button>
+      <button id="parts-clear" type="button">取消選取</button>
+    </div>
+    <div id="parts-list"></div>
+  </details>
+  <p class="hint">拖曳自由旋轉 · 滾輪/雙指縮放 · 右鍵平移 · 點零件可選取</p>
 </section>
+
+<aside class="pick" id="pick" hidden aria-live="polite">
+  <strong id="pick-name"></strong>
+  <span class="meta" id="pick-meta"></span>
+  <span id="pick-note"></span>
+  <button id="pick-close" type="button">取消選取</button>
+</aside>
 
 <nav class="views" aria-label="視角">
   <button id="v-iso" type="button">斜視</button>
@@ -335,6 +386,111 @@ function stepCar() {
   applyCar();
 }
 
+// ---- 爆炸圖與零件拆分:資料來自 glTF extras(three.js 的 userData)----
+//   part    = { id, name, group, pcs, note }:同 id 的節點是同一種零件(例如四個角的轉向叉)
+//   explode = [x, y, z]:爆炸圖 100% 時在父節點座標中的位移(公尺)
+const explodeBox = document.getElementById('explode-box'), explodeIn = document.getElementById('explode');
+const partsEl = document.getElementById('parts'), partsList = document.getElementById('parts-list');
+const pickEl = document.getElementById('pick');
+const GROUP_ORDER = ['列印件', '馬達模組', '電子', '五金'];
+let explodeNodes = [], parts = new Map(), selected = null;
+const ghostCache = new Map();
+function ghostOf(mat) {   // 未選取的零件改用半透明材質
+  if (!ghostCache.has(mat)) {
+    const g = mat.clone();
+    g.transparent = true; g.opacity = 0.12; g.depthWrite = false;
+    ghostCache.set(mat, g);
+  }
+  return ghostCache.get(mat);
+}
+function applyExplode() {
+  const t = +explodeIn.value / 100;
+  document.getElementById('explode-out').textContent = explodeIn.value + '%';
+  for (const n of explodeNodes) n.position.copy(n.userData.baseP).addScaledVector(n.userData.dirP, t);
+}
+explodeIn.addEventListener('input', applyExplode);
+
+function partOf(obj) {
+  for (let o = obj; o && o !== current; o = o.parent) if (o.userData.part) return o.userData.part.id;
+  return null;
+}
+function shownInScene(obj) {
+  for (let o = obj; o; o = o.parent) if (!o.visible) return false;
+  return true;
+}
+function applySelection() {
+  const keep = new Set();
+  if (selected) for (const n of parts.get(selected).nodes) n.traverse((o) => keep.add(o));
+  current.traverse((o) => {
+    if (!o.isMesh) return;
+    if (!o.userData.mat0) o.userData.mat0 = o.material;
+    o.material = !selected || keep.has(o) ? o.userData.mat0 : ghostOf(o.userData.mat0);
+  });
+  for (const b of partsList.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.id === selected));
+  pickEl.hidden = !selected;
+  if (selected) {
+    const p = parts.get(selected);
+    document.getElementById('pick-name').textContent = p.name;
+    document.getElementById('pick-meta').textContent = `${p.group} · 共 ${p.qty} 件`;
+    document.getElementById('pick-note').textContent = p.note;
+  }
+}
+function select(id) { selected = id; applySelection(); }
+
+function buildParts(root) {
+  parts = new Map();
+  root.traverse((o) => {
+    const p = o.userData.part;
+    if (!p) return;
+    if (!parts.has(p.id)) parts.set(p.id, { ...p, nodes: [] });
+    parts.get(p.id).nodes.push(o);
+  });
+  let total = 0;
+  for (const p of parts.values()) { p.qty = p.nodes.length * (p.pcs || 1); total += p.qty; }
+  const groups = [...new Set([...parts.values()].map((p) => p.group))]
+    .sort((a, b) => (GROUP_ORDER.indexOf(a) + 99) % 99 - (GROUP_ORDER.indexOf(b) + 99) % 99);
+  partsList.replaceChildren(...groups.flatMap((g) => {
+    const h = document.createElement('h2'); h.textContent = g;
+    const rows = [...parts.values()].filter((p) => p.group === g).map((p) => {
+      const row = document.createElement('div'); row.className = 'part-row';
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = p.nodes[0].visible;
+      cb.setAttribute('aria-label', '顯示' + p.name);
+      cb.addEventListener('change', () => { for (const n of p.nodes) n.visible = cb.checked; });
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = p.name; b.dataset.id = p.id;
+      b.addEventListener('click', () => select(selected === p.id ? null : p.id));
+      const q = document.createElement('span'); q.className = 'qty'; q.textContent = '×' + p.qty;
+      row.append(cb, b, q);
+      return row;
+    });
+    return [h, ...rows];
+  }));
+  document.getElementById('parts-count').textContent = `${parts.size} 種 · ${total} 件`;
+  partsEl.hidden = !parts.size;
+}
+document.getElementById('parts-show-all').addEventListener('click', () => {
+  for (const p of parts.values()) for (const n of p.nodes) n.visible = true;
+  for (const cb of partsList.querySelectorAll('input')) cb.checked = true;
+});
+document.getElementById('parts-clear').addEventListener('click', () => select(null));
+document.getElementById('pick-close').addEventListener('click', () => select(null));
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && selected) select(null); });
+
+// 在畫面上點零件選取(拖曳超過 4 px 視為旋轉,不算點選)
+const raycaster = new THREE.Raycaster();
+let downAt = null;
+canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!downAt || !parts.size || !current) return;
+  const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+  downAt = null;
+  if (moved > 4) return;
+  const r = canvas.getBoundingClientRect();
+  raycaster.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1,
+                                            -(e.clientY - r.top) / r.height * 2 + 1), camera);
+  const hit = raycaster.intersectObject(current, true).find((h) => shownInScene(h.object) && partOf(h.object));
+  select(hit ? partOf(hit.object) : null);
+});
+
 function place(key, root) {
   panNode = root.getObjectByName('pan_group') || null;
   tiltNode = root.getObjectByName('tilt_group') || null;
@@ -347,8 +503,23 @@ function place(key, root) {
   });
   carEl.hidden = !steerNodes.length;
   if (steerNodes.length) applyCar();
+  explodeNodes = [];
+  root.traverse((o) => {
+    if (!o.userData.explode) return;
+    if (!o.userData.baseP) {
+      o.userData.baseP = o.position.clone();
+      o.userData.dirP = new THREE.Vector3().fromArray(o.userData.explode);
+    }
+    explodeNodes.push(o);
+  });
+  explodeBox.hidden = !explodeNodes.length;
+  explodeIn.value = 0;
+  if (explodeNodes.length) applyExplode();
   if (current) scene.remove(current);
   current = root;
+  selected = null;
+  buildParts(root);
+  applySelection();
   scene.add(root);
   const box = new THREE.Box3().setFromObject(root);
   box.getCenter(center);

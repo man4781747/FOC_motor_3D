@@ -28,6 +28,7 @@
       ├ base_fixed     底座、水平模組(轉子以外)
       └ pan_group      繞 Z 軸(glTF Y 軸):水平馬達轉子、框架、俯仰模組(轉子以外)
           └ tilt_group 以俯仰軸為樞紐繞 X 軸:俯仰馬達轉子、相機支架、相機
+    extras:part = 零件清單資料(PARTS);explode = 爆炸圖位移(EXPLODE,glTF 座標、公尺)
 """
 import argparse
 import sys
@@ -70,6 +71,48 @@ TILT_PIVOT = np.array([0.0, 0.0, TILT_Z])
 CAM_X = 3.0                                               # 相機中心 X(避開支架內角圓角)
 
 C = np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], float)   # Z-up -> glTF Y-up
+
+# 零件清單(檢視頁的「零件拆分」):id -> (名稱, 分類, 每個節點的件數, 說明)
+PARTS = {
+    'base': ('底座', '列印件', 1, 'base.stl · PLA 白'),
+    'frame': ('框架(平台 + 立板)', '列印件', 1, 'frame.stl · PLA 白'),
+    'camera_bracket': ('相機支架', '列印件', 1, 'camera_bracket.stl · PLA 白'),
+    'pan_module': ('水平模組(定子 + PCB)', '馬達模組', 1, 'PCB 正面朝下鎖在底座'),
+    'pan_rotor': ('水平馬達轉子', '馬達模組', 1, '帶動框架'),
+    'tilt_module': ('俯仰模組(定子 + PCB)', '馬達模組', 1, 'PCB 正面朝立板'),
+    'tilt_rotor': ('俯仰馬達轉子', '馬達模組', 1, '帶動相機支架'),
+    'camera': ('相機模組', '電子', 1, '30 × 30 mm 板 + M12 鏡頭(佔位)'),
+    'base_screws': ('底座螺絲', '五金', 4, 'M2.5 × 12 盤頭,從底面鎖進模組銅柱'),
+    'platform_screws': ('平台螺絲', '五金', 4, 'M2.5 盤頭,鎖進水平轉子面'),
+    'plate_screws': ('立板螺絲', '五金', 4, 'M2.5 盤頭,鎖進公母銅柱'),
+    'spacers': ('公母銅柱', '五金', 4, 'M2.5 × 8 mm'),
+    'bracket_screws': ('支架螺絲', '五金', 4, 'M2.5 盤頭,鎖進俯仰轉子面'),
+    'camera_screws': ('相機螺絲', '五金', 4, 'M2 盤頭'),
+}
+# 爆炸圖位移(mm,Z 朝上,在父節點座標中):照組裝順序往外拆
+EXPLODE = {
+    'base': (0, 0, -30), 'base_screws': (0, 0, -55), 'pan_module': (0, 0, 0),
+    'pan_group': (0, 0, 35),                     # 水平轉動部分整組往上
+    'pan_rotor': (0, 0, -15),                    # 轉子落回定子方向,與平台分開
+    'frame': (0, 0, 0), 'platform_screws': (0, 0, 20),
+    'tilt_module': (20, 0, 0), 'spacers': (9, 0, 0), 'plate_screws': (-15, 0, 0),
+    'tilt_group': (45, 0, 0),                    # 相機那組沿俯仰軸往外
+    'tilt_rotor': (-15, 0, 0), 'camera_bracket': (0, 0, 0), 'bracket_screws': (15, 0, 0),
+    'camera': (0, -25, 0), 'camera_screws': (0, 15, 0),   # 相機板在前板後方,往支架內側拆
+}
+
+
+def make_extras(parts, explode, part=None, explode_key=None, **kw):
+    """glTF 節點的 extras(檢視頁用):part = 零件清單資料,explode = 爆炸位移(glTF 座標,公尺)。"""
+    e = dict(kw)
+    if part:
+        name, group, pcs, note = parts[part]
+        e['part'] = dict(id=part, name=name, group=group, pcs=pcs, note=note)
+    key = explode_key or part
+    if key in explode:
+        e['explode'] = [round(float(v), 5) for v in C @ np.array(explode[key], float) / 1000]
+    return e
+
 
 MATS = {   # sRGB, 金屬度, 粗糙度
     'print_white': ((0.92, 0.92, 0.90), 0.0, 0.6),      # 3D 列印 PLA
@@ -201,13 +244,15 @@ def make_frame():
 
 
 def frame_hardware():
-    heads = [pan_head(4.5, 1.5).translate([x, y, PLATFORM_TOP - 2.0]) for x, y in ROTOR_HOLES]
-    standoffs = []
+    """回傳 {零件 id: (manifold, 材質)}。"""
+    platform = [pan_head(4.5, 1.5).translate([x, y, PLATFORM_TOP - 2.0]) for x, y in ROTOR_HOLES]
+    standoffs, plate = [], []
     for m in MOUNT:
         wx, wy, wz = tilt_world([*m, MODULE_PCB_TOP])
         standoffs.append(along_x(hexagon(4.0, SPACER)).mirror([1, 0, 0]).translate([wx, wy, wz]))  # 往 -X 到立板
-        heads.append(along_x(pan_head(4.5, 1.5)).mirror([1, 0, 0]).translate([PLATE_X0 + 1.5, wy, wz]))
-    return {'screw': union(heads), 'brass': union(standoffs)}
+        plate.append(along_x(pan_head(4.5, 1.5)).mirror([1, 0, 0]).translate([PLATE_X0 + 1.5, wy, wz]))
+    return {'platform_screws': (union(platform), 'screw'), 'plate_screws': (union(plate), 'screw'),
+            'spacers': (union(standoffs), 'brass')}
 
 
 # ---------------- 列印件 3:相機支架 ----------------
@@ -242,14 +287,14 @@ def camera_parts():
     p['lens_barrel'] = along_y(cyl(6.0, 9.0)).translate([CAM_X, 25.0, zc]) - \
         along_y(cyl(4.5, 2.0)).translate([CAM_X, 33.2, zc])
     p['lens_glass'] = along_y(cyl(4.5, 0.6)).translate([CAM_X, 33.0, zc])
-    heads = []
-    for dx in (-12, 12):
-        for dz in (-12, 12):
-            heads.append(along_y(pan_head(3.8, 1.3)).translate([CAM_X + dx, 21.2, zc + dz]))
+    cam_heads = [along_y(pan_head(3.8, 1.3)).translate([CAM_X + dx, 21.2, zc + dz])
+                 for dx in (-12, 12) for dz in (-12, 12)]
+    rotor_heads = []
     for v in ROTOR_HOLES:
         _, wy, wz = tilt_world([*v, MODULE_ROTOR_Z])
-        heads.append(along_x(pan_head(4.5, 1.5)).translate([ROTOR_X + 4.0, wy, wz]))
-    p['screw'] = union(heads)
+        rotor_heads.append(along_x(pan_head(4.5, 1.5)).translate([ROTOR_X + 4.0, wy, wz]))
+    p['camera_screws'] = union(cam_heads)
+    p['bracket_screws'] = union(rotor_heads)
     return p
 
 
@@ -319,40 +364,50 @@ def main():
         nodes[parent].setdefault('children', []).append(len(nodes) - 1)
         return len(nodes) - 1
 
-    def add_mesh(name, man, key, parent, offset_mm=np.zeros(3)):
+    def extras(part=None, explode_key=None, **kw):
+        return make_extras(PARTS, EXPLODE, part, explode_key, **kw)
+
+    def add_mesh(name, man, key, parent, offset_mm=np.zeros(3), part=None):
         mesh = to_trimesh(man, offset_mm)
         pos, nrm, idx = gltf_arrays(trimesh.graph.smooth_shade(mesh, angle=SMOOTH_ANGLE))
         g.mesh(name, pos, nrm, idx, material(key))
         nodes[0]['children'].pop()
         nodes[parent].setdefault('children', []).append(len(nodes) - 1)
+        if part:
+            nodes[-1]['extras'] = extras(part)
 
-    def module_copy(prefix, names, parent, matrix):
-        holder = add_node(dict(name=prefix, matrix=matrix), parent)
+    def module_copy(prefix, names, parent, matrix, part=None):
+        holder = add_node(dict(name=prefix, matrix=matrix, **({'extras': extras(part)} if part else {})), parent)
         for n in names:
             add_node(dict(name=f'{prefix}_{n}', mesh=nodes[by_name[n]]['mesh']), holder)
 
     nodes[0]['name'] = 'Gimbal_2axis'
     nodes[0]['rotation'] = [0, 1, 0, 0]          # 繞垂直軸 180°,讓鏡頭朝向檢視器預設視角
     base = add_node(dict(name='base_fixed'), 0)
-    pan = add_node(dict(name='pan_group'), 0)
-    tilt = add_node(dict(name='tilt_group', translation=(C @ TILT_PIVOT / 1000).tolist()), pan)
+    pan = add_node(dict(name='pan_group', extras=extras(explode_key='pan_group')), 0)
+    tilt = add_node(dict(name='tilt_group', translation=(C @ TILT_PIVOT / 1000).tolist(),
+                         extras=extras(explode_key='tilt_group')), pan)
 
     rest = [n for n in by_name if n not in rotor_names | skip]
     rotor = [n for n in by_name if n in rotor_names]
-    module_copy('pan_module', rest, base, gltf_matrix(R_PAN, PAN_T))               # 定子 + PCB 固定
-    module_copy('pan_module_rotor', rotor, pan, gltf_matrix(R_PAN, PAN_T))         # 轉子帶動上方
-    module_copy('tilt_module', rest, pan, gltf_matrix(R_TILT, TILT_T))
-    module_copy('tilt_module_rotor', rotor, tilt, gltf_matrix(R_TILT, TILT_T - TILT_PIVOT))
+    module_copy('pan_module', rest, base, gltf_matrix(R_PAN, PAN_T), 'pan_module')          # 定子 + PCB 固定
+    module_copy('pan_module_rotor', rotor, pan, gltf_matrix(R_PAN, PAN_T), 'pan_rotor')     # 轉子帶動上方
+    module_copy('tilt_module', rest, pan, gltf_matrix(R_TILT, TILT_T), 'tilt_module')
+    module_copy('tilt_module_rotor', rotor, tilt, gltf_matrix(R_TILT, TILT_T - TILT_PIVOT), 'tilt_rotor')
 
     printed = {'base': make_base(), 'frame': make_frame(), 'camera_bracket': make_camera_bracket()}
-    add_mesh('print_base', printed['base'], 'print_white', base)
-    add_mesh('base_screws', base_screws(), 'screw', base)
-    add_mesh('print_frame', printed['frame'], 'print_white', pan)
-    for key, man in frame_hardware().items():
-        add_mesh(f'frame_{key}', man, key, pan)
-    add_mesh('print_camera_bracket', printed['camera_bracket'], 'print_white', tilt, TILT_PIVOT)
+    add_mesh('print_base', printed['base'], 'print_white', base, part='base')
+    add_mesh('base_screws', base_screws(), 'screw', base, part='base_screws')
+    add_mesh('print_frame', printed['frame'], 'print_white', pan, part='frame')
+    for key, (man, mat) in frame_hardware().items():
+        add_mesh(f'frame_{key}', man, mat, pan, part=key)
+    add_mesh('print_camera_bracket', printed['camera_bracket'], 'print_white', tilt, TILT_PIVOT, part='camera_bracket')
+    camera = add_node(dict(name='camera', extras=extras('camera')), tilt)   # 相機 4 個網格包成一個零件
     for key, man in camera_parts().items():
-        add_mesh(f'camera_{key}', man, key, tilt, TILT_PIVOT)
+        if key.endswith('_screws'):
+            add_mesh(f'camera_{key}', man, 'screw', tilt, TILT_PIVOT, part=key)
+        else:
+            add_mesh(f'camera_{key}', man, key, camera, TILT_PIVOT)
 
     g.save(args.out)
     print('輸出', args.out, f'{Path(args.out).stat().st_size / 1e6:.1f} MB')

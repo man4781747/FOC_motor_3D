@@ -27,7 +27,8 @@
           └ corner_FL/FR/RL/RR  橋架、轉向模組(轉子以外)
               └ steer_*         繞垂直軸:轉向轉子、轉向叉、驅動模組(轉子以外)
                   └ wheel_*     繞輪軸:驅動轉子、輪轂、輪胎
-    extras:steer_*.spin_steer = 原地旋轉時的轉向角;wheel_*.spin_sign = 前進時車輪正轉為 +1 / 反轉為 -1
+    extras:steer_*.spin_steer = 原地旋轉時的轉向角;wheel_*.spin_sign = 前進時車輪正轉為 +1 / 反轉為 -1;
+            part = 零件清單資料(PARTS);explode = 爆炸圖位移(EXPLODE,glTF 座標、公尺)
 """
 import argparse
 import sys
@@ -41,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import build_print_step as q  # noqa: E402  CadQuery 小工具
 from build_assembly import load_glb  # noqa: E402
 from build_gimbal import (M3, M25, MODULE_PCB_TOP, MODULE_ROTOR_Z, MOUNT, R_TILT, ROTOR_HOLES,  # noqa: E402
-                          along_x, gltf_matrix, hexagon, pan_head)
+                          along_x, gltf_matrix, hexagon, make_extras, pan_head)
 from build_glb import SMOOTH_ANGLE, gltf_arrays, srgb_to_linear  # noqa: E402
 from build_motor import polar, union  # noqa: E402
 
@@ -85,6 +86,37 @@ BATTERY = (75.0, 35.0, 25.0)         # 3S 1300 mAh 佔位
 CORNERS = {   # 名稱: (x, y, 偏擺角, 前進時車輪轉向)
     'FL': (CORNER_X, CORNER_Y, 90, 1), 'RL': (-CORNER_X, CORNER_Y, 90, 1),
     'FR': (CORNER_X, -CORNER_Y, -90, -1), 'RR': (-CORNER_X, -CORNER_Y, -90, -1),
+}
+
+# 零件清單(檢視頁的「零件拆分」):id -> (名稱, 分類, 每個節點的件數, 說明)
+# 列印件的說明是 STL 檔名;分類順序就是清單顯示順序
+PARTS = {
+    'top_cover': ('上蓋', '列印件', 1, 'top_cover.stl · PLA 白'),
+    'bottom_plate': ('底板', '列印件', 1, 'bottom_plate.stl · PLA 黑'),
+    'bridge': ('橋架', '列印件', 1, 'bridge.stl · PLA 白'),
+    'fork': ('轉向叉', '列印件', 1, 'fork.stl · PLA 白'),
+    'hub': ('輪轂', '列印件', 1, 'hub.stl · PLA 白'),
+    'tire': ('輪胎', '列印件', 1, 'tire.stl · TPU 黑'),
+    'steer_module': ('轉向模組(定子 + PCB)', '馬達模組', 1, 'PCB + 2804,馬達朝下'),
+    'steer_rotor': ('轉向馬達轉子', '馬達模組', 1, '帶動轉向叉'),
+    'drive_module': ('驅動模組(定子 + PCB)', '馬達模組', 1, 'PCB + 2804,鎖在轉向叉立板'),
+    'drive_rotor': ('驅動馬達轉子', '馬達模組', 1, '帶動輪轂'),
+    'battery': ('電池', '電子', 1, '3S 1300 mAh 尺寸佔位'),
+    'bridge_screws': ('橋架螺絲', '五金', 4, 'M2.5 盤頭,鎖進轉向模組銅柱'),
+    'flange_screws': ('法蘭螺絲', '五金', 4, 'M2.5 盤頭,從下方鎖進轉向轉子面'),
+    'plate_screws': ('立板螺絲', '五金', 4, 'M2.5 盤頭,鎖進公母銅柱'),
+    'spacers': ('公母銅柱', '五金', 4, 'M2.5 × 8 mm'),
+    'hub_screws': ('輪轂螺絲', '五金', 4, 'M2.5 盤頭,鎖進驅動轉子面'),
+}
+# 爆炸圖位移(mm,Z 朝上,在父節點座標中):照組裝順序往外拆
+EXPLODE = {
+    'top_cover': (0, 0, 110), 'battery': (0, 0, 50), 'bottom_plate': (0, 0, 0),
+    'bridge': (0, 0, 70), 'bridge_screws': (0, 0, 95), 'steer_module': (0, 0, 38),
+    'steer': (0, 0, -30),                       # 整組舵輪往下(轉子留在舵輪上,與定子分開)
+    'steer_rotor': (0, 0, 0), 'fork': (0, 0, 0),
+    'flange_screws': (0, 0, -16), 'plate_screws': (-18, 0, 0), 'spacers': (10, 0, 0),
+    'drive_module': (25, 0, 0), 'wheel': (50, 0, 0),   # 沿輪軸(舵輪座標 +X)往外
+    'drive_rotor': (0, 0, 0), 'hub': (10, 0, 0), 'tire': (22, 0, 0), 'hub_screws': (34, 0, 0),
 }
 
 MATS = {   # sRGB, 金屬度, 粗糙度
@@ -249,7 +281,7 @@ def fork_hardware():
         wx, wy, wz = drive_world([*m, MODULE_PCB_TOP])
         standoffs.append(along_x(hexagon(4.0, SPACER)).mirror([1, 0, 0]).translate([wx, wy, wz]))
         heads.append(along_x(pan_head(4.5, 1.5)).mirror([1, 0, 0]).translate([FORK_X0 + 1.5, wy, wz]))
-    return {'screw': union(heads), 'brass': union(standoffs)}
+    return {'flange_screws': union(heads[:4]), 'plate_screws': union(heads[4:]), 'spacers': union(standoffs)}
 
 
 def hub_screws():
@@ -334,14 +366,19 @@ def main():
             mesh_cache[name] = len(g.j['meshes']) - 1
         return mesh_cache[name]
 
-    def place(name, make, key, parent, matrix=None):
+    def extras(part=None, explode=None, **kw):
+        return make_extras(PARTS, EXPLODE, part, explode, **kw)
+
+    def place(name, make, key, parent, matrix=None, part=None):
         node = dict(name=name, mesh=mesh_index(name.split('@')[0], make, key))
+        if part:
+            node['extras'] = extras(part)
         if matrix is not None:
             node['matrix'] = matrix
         add_node(node, parent)
 
-    def module_copy(prefix, names, parent, matrix):
-        holder = add_node(dict(name=prefix, matrix=matrix), parent)
+    def module_copy(prefix, names, parent, matrix, part=None):
+        holder = add_node(dict(name=prefix, matrix=matrix, **({'extras': extras(part)} if part else {})), parent)
         for n in names:
             add_node(dict(name=f'{prefix}_{n}', mesh=nodes[by_name[n]]['mesh']), holder)
 
@@ -351,31 +388,35 @@ def main():
 
     nodes[0]['name'] = 'Car_swerve'
     body = add_node(dict(name='body'), 0)
-    place('print_top_cover', lambda: cq_to_trimesh(shapes['top_cover']), 'print_white', body)
-    place('print_bottom_plate', lambda: cq_to_trimesh(shapes['bottom_plate']), 'print_black', body)
-    place('battery', lambda: man_to_trimesh(battery()), 'battery', body)
+    place('print_top_cover', lambda: cq_to_trimesh(shapes['top_cover']), 'print_white', body, part='top_cover')
+    place('print_bottom_plate', lambda: cq_to_trimesh(shapes['bottom_plate']), 'print_black', body,
+          part='bottom_plate')
+    place('battery', lambda: man_to_trimesh(battery()), 'battery', body, part='battery')
     fork_hw = fork_hardware()
     for cname, (cx, cy, yaw, sign) in CORNERS.items():
         corner = add_node(dict(name=f'corner_{cname}', matrix=gltf_matrix(rz(yaw), [cx, cy, 0])), body)
-        place(f'print_bridge@{cname}', lambda: cq_to_trimesh(shapes['bridge']), 'print_white', corner)
-        place(f'bridge_screws@{cname}', lambda: man_to_trimesh(bridge_screws()), 'screw', corner)
-        module_copy(f'steer_module_{cname}', rest, corner, gltf_matrix(np.eye(3), STEER_T))
+        place(f'print_bridge@{cname}', lambda: cq_to_trimesh(shapes['bridge']), 'print_white', corner, part='bridge')
+        place(f'bridge_screws@{cname}', lambda: man_to_trimesh(bridge_screws()), 'screw', corner,
+              part='bridge_screws')
+        module_copy(f'steer_module_{cname}', rest, corner, gltf_matrix(np.eye(3), STEER_T), part='steer_module')
         # 原地旋轉:滾動方向(舵輪座標 +Y)與以車身中心為圓心的圓相切,取 ±90° 以內
         spin = (np.degrees(np.arctan2(cy, cx)) - yaw + 90) % 180 - 90
-        steer = add_node(dict(name=f'steer_{cname}', extras=dict(spin_steer=round(float(spin), 2))), corner)
-        module_copy(f'steer_module_rotor_{cname}', rotor, steer, gltf_matrix(np.eye(3), STEER_T))
-        place(f'print_fork@{cname}', lambda: cq_to_trimesh(shapes['fork']), 'print_white', steer)
+        steer = add_node(dict(name=f'steer_{cname}', extras=extras(explode='steer', spin_steer=round(float(spin), 2))),
+                         corner)
+        module_copy(f'steer_module_rotor_{cname}', rotor, steer, gltf_matrix(np.eye(3), STEER_T), part='steer_rotor')
+        place(f'print_fork@{cname}', lambda: cq_to_trimesh(shapes['fork']), 'print_white', steer, part='fork')
         for key, man in fork_hw.items():
-            place(f'fork_{key}@{cname}', lambda man=man: man_to_trimesh(man), key, steer)
-        module_copy(f'drive_module_{cname}', rest, steer, gltf_matrix(R_D, T_D))
+            place(f'fork_{key}@{cname}', lambda man=man: man_to_trimesh(man),
+                  'brass' if key == 'spacers' else 'screw', steer, part=key)
+        module_copy(f'drive_module_{cname}', rest, steer, gltf_matrix(R_D, T_D), part='drive_module')
         axle = np.array([0, 0, AXLE_Z])
         wheel = add_node(dict(name=f'wheel_{cname}', translation=gltf_matrix(t_mm=axle)[12:15],
-                              extras=dict(spin_sign=sign)), steer)
+                              extras=extras(explode='wheel', spin_sign=sign)), steer)
         m = gltf_matrix(R_D, T_D - axle)
-        module_copy(f'drive_module_rotor_{cname}', rotor, wheel, m)
-        place(f'print_hub@{cname}', lambda: cq_to_trimesh(shapes['hub']), 'print_white', wheel, m)
-        place(f'print_tire@{cname}', lambda: cq_to_trimesh(shapes['tire']), 'tire', wheel, m)
-        place(f'hub_screws@{cname}', lambda: man_to_trimesh(hub_screws()), 'screw', wheel, m)
+        module_copy(f'drive_module_rotor_{cname}', rotor, wheel, m, part='drive_rotor')
+        place(f'print_hub@{cname}', lambda: cq_to_trimesh(shapes['hub']), 'print_white', wheel, m, part='hub')
+        place(f'print_tire@{cname}', lambda: cq_to_trimesh(shapes['tire']), 'tire', wheel, m, part='tire')
+        place(f'hub_screws@{cname}', lambda: man_to_trimesh(hub_screws()), 'screw', wheel, m, part='hub_screws')
 
     g.save(args.out)
     print('輸出', args.out, f'{Path(args.out).stat().st_size / 1e6:.1f} MB')
