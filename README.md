@@ -128,7 +128,7 @@ output/
 ## 已知限制
 
 - 零件的金屬材質是依 MTL 顏色推估的(中性灰且反光強 → 金屬),少數零件可能不準
-- `build_glb.py` 的重疊平面清理以凸包取代,若零件有凹形且重疊的平面,外形可能被填平
+- `build_glb.py` 的重疊平面清理先以凸包取代;凸包會蓋到同平面其他三角形、或區塊本身凹形且不相連時,改用聯集多邊形(見 SIM7000 一節)
 - 馬達只有外觀,沒有內部繞組與磁鐵
 
 ## 水情盒主板(Main_PCB V2.4)
@@ -138,7 +138,8 @@ output/
 
 ```bash
 uv run scripts/make_textures.py 水情盒/Gerber_*.zip output/water_box/textures --fit-outline
-uv run scripts/build_glb.py 水情盒/OBJ_PCB_*.zip output/water_box/textures output/water_box/main_pcb_v2.4.glb
+uv run scripts/build_glb.py 水情盒/OBJ_PCB_*.zip output/water_box/textures output/water_box/main_pcb_v2.4.glb \
+    fixes/main_pcb_v2.4.json               # 刪掉 LORA 1×7 母座與 LORA-SUP 1×3 排針(不裝)
 uv run scripts/glb_to_gltf_json.py output/water_box/main_pcb_v2.4.glb output/viewer/water_box_main_pcb.gltf.json
 ```
 
@@ -168,6 +169,26 @@ uv run scripts/glb_to_gltf_json.py output/rs485/rs485_v1.glb output/viewer/rs485
 修正檔,`fixes/rs485_v1.json` 刪掉它的材質群組(mtl17 本體、mtl18 端子),依焊墊與絲印換成
 10 × 9.1 × 4 mm 的遮蔽式電感(圓角黑色本體 + 兩端 L 形端子)。尺寸是依焊墊推估,
 知道實際料號後改 JSON 的 `box` 即可。其他板子遇到壞掉的零件也可以用同樣方式處理。
+
+### SIM7000 IoT 模組板(My-SIM7000 V1.1)
+
+輸入檔放在 `SIM7000E/`。59.7 × 65.7 mm、2 層板,同樣要加 `--fit-outline`:
+
+```bash
+uv run scripts/make_textures.py SIM7000E/Gerber_*.zip output/sim7000e/textures --fit-outline
+uv run scripts/build_glb.py SIM7000E/OBJ_PCB_*.zip output/sim7000e/textures output/sim7000e/sim7000e.glb \
+    fixes/sim7000e.json                    # 頂端電解電容不裝,刪掉
+uv run scripts/glb_to_gltf_json.py output/sim7000e/sim7000e.glb output/viewer/sim7000e.gltf.json
+```
+
+檢視頁網址加 `#sim7000e`。四角 Ø3.0 孔,孔距 55.1 × 61.1 mm。
+頂端的 SMD 電解電容實際不裝,`fixes/sim7000e.json` 用 `drop_box`(刪掉方塊內的三角形,給和其他零件共用材質群組的零件用)
+把它連同塑膠底座刪掉,只留焊墊與絲印;拿掉後最高零件是 5P 排針座(離板面 5.7 mm)。
+
+這塊板子讓 `build_glb.py` 多了兩個網格清理步驟(所有板子都會套用):
+- `merge_overlapping_union`:凸包法抓不到的重疊平面(有缺口的 SIM 卡座鐵殼、或凸包面又蓋到同平面其他三角形)
+  改用聯集多邊形重新三角化,保留缺口
+- `separate_sheets`:零厚度鈑金在同一平面上有朝上 / 朝下兩層面,材質是雙面的會閃爍;朝下那層往下移 0.01 mm
 
 ### SEN0676 雷達液位感測器模組
 
@@ -225,11 +246,13 @@ uv run scripts/glb_to_gltf_json.py output/ag12/ag12.glb output/viewer/ag12.gltf.
 uv run scripts/build_water_box.py 196136506-104-1862264.zip 水情盒/底板_3.3mf output/water_box/water_box.glb \
     --rs485 output/rs485/rs485_v1.glb \     # RS485 擴展板(選用,需先建好 rs485_v1.glb)
     --main output/water_box/main_pcb_v2.4.glb \ # 水情盒主板,裝在最上層(選用,需要 --rs485)
-    --sen0676 output/sen0676/sen0676.glb       # SEN0676 雷達,裝在 -Y 牆的 Ø40 孔(選用)
+    --sim7000 output/sim7000e/sim7000e.glb \    # SIM7000 IoT 模組板,裝在主板上(選用,需要 --main)
+    --sen0676 output/sen0676/sen0676.glb \     # SEN0676 雷達,裝在 -X 牆的 Ø48.5 孔(選用)
+    --ag12                                     # SEN0676 右側上下兩顆 AG-12 電纜固定頭(選用)
 uv run scripts/glb_to_gltf_json.py output/water_box/water_box.glb output/viewer/water_box.gltf.json
 ```
 
-檢視頁網址加 `#waterboxasm`;拉爆炸圖或在零件拆分取消勾選盒蓋就能看到內部。
+檢視頁網址加 `#waterboxasm`。防水盒盒蓋預設不顯示(檢視頁 `DEFAULT_HIDDEN`,平台車也一樣),要看時在零件拆分勾回「防水盒 盒蓋」或按「全部顯示」。
 
 - 盒底內側有 4 根凸柱(Ø7.9、中心 Ø2.4 自攻導孔、比內底高 5.9 mm),位置 (±62.75, ±61.4);
   底板的 4 個 Ø4.0 孔剛好對準(誤差 0.02 mm),四角與兩側缺口避開盒蓋螺絲柱
@@ -248,6 +271,47 @@ uv run scripts/glb_to_gltf_json.py output/water_box/water_box.glb output/viewer/
 - 由下往上的組裝順序:底板背面螺絲 + 尼龍柱 → 底板鎖進盒子 → RS485 板 + 金屬柱 → 主板 + 螺絲 → 盒蓋
 - 兩塊板子都轉 270°(`PCB_YAW`,主板 `MAIN_YAW` 跟著),RS485 的 4 組端子朝 -X(盒子中央方向);
   這個方向金屬柱旁最近的零件離柱中心 3.8 mm(六角柱角半徑 3.18 mm),間隙約 0.6 mm
+- **SIM7000 IoT 模組板**(`--sim7000`):用主板中段那組 Ø3.0 孔(61.1 × 55.1 mm,和 SIM7000 板四角孔
+  55.1 × 61.1 轉 90° 對上,誤差 0.02 mm),**M3 × 14 尼龍母母六角柱** × 4(對邊 5.5),上下各 **M3 × 6 盤頭** × 4
+  (下方從主板背面鎖)。板子背面 z=73.5,正下方主板最高零件 z=68.2(間隙 4.3 mm)。
+  **干涉:SIM7000 最高零件(5P 排針座)z=81.7,盒蓋內面 z=78.2,伸進盒蓋 3.4 mm。**
+  腳本用格網射線量 SIM7000 板(含背面焊腳)與主板零件的實際最小間隙 5.3 mm,所以柱子可縮短到 9.0~10.1 mm,
+  例如改 **M3 × 10**(上方離盒蓋 0.5 mm、下方間隙 1.3 mm)。
+  - **排線**:SIM7000 板的 5P XH 臥式排針座接到正下方主板的 5P XH 排針座(兩個開口都朝 -Y,前緣差 6.4 mm、
+    高度差 16.5 mm),用 **XH 2.5 5P 雙頭排線 100 mm**(AWG26,XHP-5 膠殼外形簡化)。100 mm 比兩座距離長很多,
+    排線做成 J 形:從上方插頭往 -Y 出線、彎下、在 z≈35 U 形迴轉、往上彎進主板插頭;最外 y=-71.3,離 -Y 牆內面 12.7 mm。
+    腳本自動找排針座(外形 + 往內打射線找開口與腔深),路徑用線長解出最低點。線色只是區分用(紅 / 黃 / 綠 / 藍 / 黑)。
+    常數在 `SIM_CABLE_L`、`XH_*`、`XHP_LEN`
+  常數在 `SIM_SPACER_L`、`SIM_HOLES`、`SIM_REL_YAW`
+- **插卡與 OLED**(有 `--main` / `--sim7000` 時自動加上,常數在 `SD_*`、`SIM_SLOTS`、`SIM_CARD_Z0`、`OLED_*`):
+  - **microSD 卡**插在主板 microSD 卡座(推入式),卡尾露出卡座前緣約 1 mm
+  - **Micro SIM 卡**(3FF 15 × 12 × 0.76)× 2,裝在 SIM7000 板兩個掀蓋卡座內、接點朝下(卡頂 4.16,卡座蓋內面 4.2)
+  - **1.3 吋 OLED 模組**(SH1106 128 × 64、I2C 4P:VCC / GND / SCL / SDA),插在主板「OLED」1×4 母座
+    (3.3V / GND / SCL / SDA,腳位一對一),平躺、螢幕朝上,往板子 -Y(端子那側)延伸。模組板底離下方主板零件
+    最少 1.8 mm、玻璃頂離盒蓋內面 5.0 mm,不在 SIM7000 板下方。尺寸取自常見規格:板 35.4 × 33.5 × 1.2、
+    玻璃 34.5 × 23 × 1.4、顯示區 29.42 × 14.7;四角孔(Ø2.6、孔距 30.4 × 28.5)與玻璃位置是估計值
+  - **DS3231 時鐘模組**(「For Pi」迷你款,13.64 × 13.71 mm,量自賣場照片):1×5 母座(+ / D / C / NC / −)倒插在主板
+    「DS3231」1×5 公排針(3.3V / SDA / SCL / NC / GND,腳位一對一),母座坐在公排針塑膠上;晶片 DS3231SN(SOIC-16W)
+    朝上、LIR1220 電池(黃色絕緣套 + 鎳片)朝下,模組本體往板子 -X(RST 按鍵那側)。電池離下方主板零件 6.0 mm、
+    模組頂離盒蓋內面 4.4 mm。母座高 8.5、板厚 1.0、晶片與電阻電容位置依照片估計(常數 `DS3231_*`)
+  - **跳線帽** × 3(2.54 mm,黑):主板 RANGE、SPEED、D_SENSOR(濁度電壓)三組 1×3 排針(+3.3V / IN / +5V)
+    都選 +5V,跳在 IN-+5V;帽子套在排針塑膠頂上,帽頂與針頂齊(常數 `JUMPERS`、`JUMPER_Z0`)
+- **LORA 接頭**:主板原本的 LORA 1×7 母座與 LORA-SUP 1×3 排針不裝(`fixes/main_pcb_v2.4.json` 用 `drop_box` 刪掉),
+  LORA 改用 **XH2.5 7P 90° 公座**(S7B-XH-A 類,白色),裝在主板**底面**、開口朝板子 +Y(LORA-SUP / 板子上緣那側),
+  穿板腳從原 7 個焊墊伸到正面。原焊墊是 2.54 mm 間距、XH 是 2.5 mm(7P 總長差 0.24 mm),**PCB 要改成 XH 封裝**。
+  公座本體底離下方 RS485 板零件 17.3 mm(常數 `LORA_XH`;公座外形簡化:寬 19.9、深 11.5、高 5.75)
+- **LORA 排線**:主板底面的 XH 7P 臥式公座接到正下方 RS485 板的 XH 7P 立式公座(B7B-XH-A 類,開口朝上),
+  用 **XH 2.5 7P 雙頭排線 50 mm**。主板端插頭水平插入、RS485 端插頭由上往下插入(插入 4.8 mm,腔底離板面 2.0);
+  排線沿主板 +Y 出線約 9 mm、往下 U 形迴轉、往回再彎 90° 垂直插入 RS485。排線中心線離兩塊板子與零件最少 2.9 mm。
+  常數 `LORA_CABLE_L`、`RS485_XH`;線長改了路徑會自動重算(出線距離吸收多出的長度,最短約 32 mm)
+- **BAT 電源線**:RS485 板「BAT」XH 2P 立式公座插 XHP-2 母頭,只壓一支端子(x=22.99 那支,銅箔接到旁邊 IC 的 BAT 腳,
+  當作 +),AWG26 紅線 S 形往上,焊在主板 DC 接頭 + 腳(中心針,離開口最遠那支,板子座標 (39.2, -36.12))的底面針腳上。
+  線長約 30 mm,離兩塊板子零件最少 2.1 mm、離六角柱 10.9 mm(常數 `RS485_BAT`、`DC_PLUS`、`BAT_WIRE_K`)
+- **Wi-Fi 天線**(ESP32-S3):2.4 GHz 銅管天線(全向 3 dBi)+ 1 代 IPEX 線 50 mm。IPEX 公頭插在 ESP32-S3 模組角落的 IPEX 座
+  (板子座標 (10.48, 2.86)),線尾朝模組邊緣(避開屏蔽罩),同軸線 S 形繞到天線底端;天線平躺在主板與 SIM7000 板之間
+  (中心高 z=66.5),往板子 -X 伸出,鞭狀線伸出主板邊緣。位置是用格網射線在盒內搜尋「線長 50 mm 搆得到、四周留 0.3 mm 以上」
+  的水平擺法中間隙最大的一個;天線離其他零件最少 2.2 mm、同軸線 1.5 mm。外形依賣場照片比例估計
+  (粗段 Ø5.5 × 30、細段 Ø4.6 × 17、鞭狀線 28 mm),常數 `ANT_*`
 - **SEN0676 雷達**(`--sen0676`):盒身 **-X 短邊**的牆(厚 3.09)開 **Ø48.5 孔**(G1½ 螺紋外徑 47.8 要穿過),
   孔中心在 (-X, +Y) 角落盒蓋螺絲柱邊緣往 -Y **70 mm**、盒身上緣往下 **27 mm**(y=-3.77、z=35.85)。
   雷達從盒內裝、鏡頭朝外,六角法蘭一組對邊平行於盒底(平邊離盒內底 0.36 mm):
@@ -260,6 +324,12 @@ uv run scripts/glb_to_gltf_json.py output/water_box/water_box.glb output/viewer/
   - 孔頂(z=60.1)離密封條底只有 0.45 mm,開孔時要小心不要破到密封條溝
   - 離電路板六角柱 69.8 mm、雷達頂離盒蓋內面 11.4 mm;**唯一干涉:底板 -X 邊緣**(x=-102.5)壓在法蘭下方,
     需在底板開缺口。常數在 `SEN_HOLE_*`、`SEN_ORING*`、`SEN_NUT`
+- **AG-12 電纜固定頭**(`--ag12`):同一面 -X 牆、SEN0676 右側(從盒外看)上下兩顆,開 **Ø12.2 孔**。
+  孔中心在盒身外圍右側(-Y,y=-87.4)往左 **34 mm**(y=-53.4),下孔離盒外最底部 **19 mm**、上孔再往上 **25 mm**(z=44)。
+  固定頭(墊片貼牆)在盒外、AGL-12 螺帽在盒內,六角一組平邊平行盒底
+  - 牆厚 3.04 / 3.15,螺帽只咬到 3.9 / 3.8 mm 螺紋(螺帽高 5.2,L1 只有 7.9)
+  - 盒外:墊片離 SEN0676 螺帽 10.4 mm;盒內:下孔螺帽離底板 -X 邊緣 0.9 mm、最低點 z=9.2(盒內底 4.5),無干涉
+  - 常數在 `AG12_HOLE_D`、`AG12_FROM_SIDE`、`AG12_FROM_BOTTOM`
 - 底板的 Ø3.0 孔剛好等於 M3 外徑,螺絲會直接咬進列印件;想要好穿可以把孔擴到 Ø3.2–3.4
 - RS485 板最高的零件到盒緣約 26 mm;板子背面的插件腳離底板約 11 mm
 

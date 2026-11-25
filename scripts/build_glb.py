@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["numpy", "trimesh", "scipy", "networkx"]
+# dependencies = ["numpy", "trimesh", "scipy", "networkx", "shapely", "mapbox_earcut"]
 # ///
 """把 EasyEDA 匯出的 OBJ zip + Gerber 貼圖組合成一個 GLB(glTF 2.0)。
 
@@ -14,6 +14,8 @@
               "box": [x0, x1, y0, y1, z0, z1], "round": 0.8}]}
 座標是 mm,xy 以板子中心為原點(與貼圖一致,+Y 朝上),z=0 是板子背面(板子正面 z=2.54)。
 round > 0 時四條垂直邊倒圓角。
+不裝的零件(和別的零件共用材質群組,不能整組刪)用 "drop_box": [[x0, x1, y0, y1, z0, z1], ...]:
+刪掉所有零件網格中、三個頂點都落在方塊內的三角形。
 
 處理內容:
 - EasyEDA OBJ 單位是 10 mil(0.254 mm),換算成公尺(glTF 標準單位)
@@ -223,6 +225,51 @@ def clean_overlapping_planes(mesh, ratio=1.3):
     return trimesh.Trimesh(verts, faces, process=True), planes
 
 
+def merge_overlapping_union(mesh, union_ratio=1.15):
+    """凸包法抓不到的重疊(外形不是凸的、重疊的三角形彼此不相連,或凸包面又蓋到同平面其他三角形,
+    例如有缺口的 SIM 卡座鐵殼):同一水平面、同一朝向的三角形面積總和 > 聯集面積 * union_ratio 時,
+    換成聯集多邊形(可含缺口)的三角化。回傳 (新 mesh, 處理的平面數)。"""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    fn = mesh.face_normals
+    horiz = np.abs(fn[:, 2]) > 0.999
+    zf = np.round(mesh.vertices[mesh.faces][:, :, 2].mean(1), 6)
+    keep = np.ones(len(mesh.faces), bool)
+    new_v, new_f = [], []
+    base = len(mesh.vertices)
+    n_union = 0
+    for z in np.unique(zf[horiz & keep]):
+        for up in (True, False):
+            ids = np.where(horiz & keep & (zf == z) & ((fn[:, 2] > 0) == up))[0]
+            if len(ids) < 4:
+                continue
+            tri = mesh.vertices[mesh.faces[ids]][:, :, :2]
+            d1, d2 = tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+            area = np.abs(d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0]).sum() / 2
+            union = unary_union([Polygon(t).buffer(0) for t in tri])
+            if area <= union.area * union_ratio:
+                continue
+            for poly in getattr(union, 'geoms', [union]):
+                if poly.area <= 0:
+                    continue
+                v2, f2 = trimesh.creation.triangulate_polygon(poly, engine='earcut')
+                v2 = np.asarray(v2, float)
+                f2 = np.asarray(f2, int)
+                d1, d2 = v2[f2[:, 1]] - v2[f2[:, 0]], v2[f2[:, 2]] - v2[f2[:, 0]]
+                ccw = d1[:, 0] * d2[:, 1] - d1[:, 1] * d2[:, 0] > 0
+                f2[ccw != up] = f2[ccw != up][:, ::-1]
+                start = base + sum(len(v) for v in new_v)
+                new_v.append(np.column_stack([v2, np.full(len(v2), z)]))
+                new_f += (f2 + start).tolist()
+            keep[ids] = False
+            n_union += 1
+    if not n_union:
+        return mesh, 0
+    verts = np.vstack([mesh.vertices] + new_v)
+    faces = np.vstack([mesh.faces[keep], np.array(new_f)])
+    return trimesh.Trimesh(verts, faces, process=True), n_union
+
+
 MARK_DEPTH = 0.1 * UNIT_MM / 1000   # 印字凹刻深度上限(約 0.025 mm)
 MARK_LIFT = 0.02 / 1000             # 抬到平面外 0.02 mm
 
@@ -249,6 +296,36 @@ def lift_markings(mesh, planes):
         mesh.vertices = verts
         lifted += int(sel.sum())
     return lifted
+
+
+def separate_sheets(mesh, gap=0.01 / 1000):
+    """零厚度鈑金(例如 SIM 卡座鐵殼)在同一水平面上有朝上、朝下兩層面;材質是雙面的,
+    兩層深度相同會閃爍。把朝下那層(用獨立頂點)往下移 gap。回傳移動的三角形數。"""
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    fn = mesh.face_normals
+    horiz = np.abs(fn[:, 2]) > 0.999
+    zf = np.round(mesh.triangles_center[:, 2], 6)
+    move = np.zeros(len(mesh.faces), bool)
+    for z in np.unique(zf[horiz]):
+        up = np.where(horiz & (zf == z) & (fn[:, 2] > 0))[0]
+        dn = np.where(horiz & (zf == z) & (fn[:, 2] < 0))[0]
+        if not len(up) or not len(dn):
+            continue
+        u = unary_union([Polygon(t).buffer(0) for t in mesh.triangles[up][:, :, :2]])
+        for i in dn:
+            if Polygon(mesh.triangles[i][:, :2]).buffer(0).intersection(u).area > 1e-9:   # > 0.001 mm²
+                move[i] = True
+    if not move.any():
+        return 0
+    ids = np.where(move)[0]
+    new_v = mesh.vertices[mesh.faces[ids]].reshape(-1, 3).copy()
+    new_v[:, 2] -= gap
+    faces = mesh.faces.copy()
+    faces[ids] = len(mesh.vertices) + np.arange(len(new_v)).reshape(-1, 3)
+    mesh.vertices = np.vstack([mesh.vertices, new_v])
+    mesh.faces = faces
+    return len(ids)
 
 
 def fix_and_shade(mesh):
@@ -361,9 +438,25 @@ def main():
     for name, tris in groups.items():
         if name == BOARD_MTL or name in fix.get('drop', []):
             continue
-        mesh, planes = clean_overlapping_planes(to_mesh(V, tris, center))
-        if planes:
-            print(f'  {name}: 清理 {len(planes)} 個重疊的平面')
+        mesh = to_mesh(V, tris, center)
+        if fix.get('drop_box'):
+            mm = mesh.vertices * 1000
+            inside = np.zeros(len(mm), bool)
+            for x0, x1, y0, y1, z0, z1 in fix['drop_box']:
+                inside |= ((mm[:, 0] >= x0) & (mm[:, 0] <= x1) & (mm[:, 1] >= y0) & (mm[:, 1] <= y1)
+                           & (mm[:, 2] >= z0) & (mm[:, 2] <= z1))
+            gone = inside[mesh.faces].all(1)
+            if gone.all():
+                print(f'  {name}: 整組在 drop_box 內,刪除')
+                continue
+            if gone.any():
+                mesh.update_faces(~gone)
+                mesh.remove_unreferenced_vertices()
+                print(f'  {name}: drop_box 刪除 {int(gone.sum())} 個三角形')
+        mesh, planes = clean_overlapping_planes(mesh)
+        mesh, n_union = merge_overlapping_union(mesh)
+        if planes or n_union:
+            print(f'  {name}: 清理 {len(planes) + n_union} 個重疊的平面' + (f'(其中 {n_union} 個非凸)' if n_union else ''))
         meshes[name] = mesh
         all_planes += planes
     # 第二階段:把被蓋住的印字抬出來,輸出
@@ -371,6 +464,9 @@ def main():
         n = lift_markings(mesh, all_planes)
         if n:
             print(f'  {name}: 抬升 {n} 個印字三角形')
+        n = separate_sheets(mesh)
+        if n:
+            print(f'  {name}: 零厚度鈑金背面下移 {n} 個三角形')
         m = mats.get(name, {})
         mat = g.material(pbr_for(name, m.get('Kd', [0.5] * 3), m.get('Ks')))
         pos, nrm, idx = gltf_arrays(fix_and_shade(mesh))

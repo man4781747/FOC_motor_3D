@@ -133,6 +133,7 @@
     <button id="m-waterbox" type="button" aria-pressed="false">水情盒主板</button>
     <button id="m-waterboxasm" type="button" aria-pressed="false">水情盒</button>
     <button id="m-rs485" type="button" aria-pressed="false">RS485 擴展板</button>
+    <button id="m-sim7000e" type="button" aria-pressed="false">SIM7000 IoT 模組板</button>
     <button id="m-sen0676" type="button" aria-pressed="false">SEN0676 雷達</button>
     <button id="m-ag12" type="button" aria-pressed="false">AG-12 固定頭</button>
   </div>
@@ -249,16 +250,22 @@ const MODELS = {
             ['介面', 'LoRa、USB、DS3231、OLED、RANGE / SPEED 感測器']],
   },
   waterboxasm: {
-    file: 'water_box.gltf.json', title: '水情盒(防水盒 + 底板 + RS485 + 主板 + SEN0676 雷達)',
+    file: 'water_box.gltf.json', title: '水情盒(防水盒 + 底板 + RS485 + 主板 + SIM7000 + SEN0676 雷達 + AG-12)',
     specs: [['防水盒', 'RS PRO 1862264,225 × 175 × 81 mm'], ['底板', '205 × 155 × 2 mm,4 × ST3.0 × 6 鎖在盒底凸柱'],
             ['RS485 板', '下:M3 × 12 尼龍柱 + M3 × 6;上:M3 × 30 金屬公母柱'], ['RS485 位置', '底板較置中的孔組,兩板轉 270°,端子朝盒子中央'],
-            ['主板', '最上層,M3 × 6 鎖在金屬柱頂;最高零件離盒蓋 7.8 mm'], ['雷達', '-X 短邊 Ø48.5 孔,O 型環 43.7 × 2.65 + AGJL-112 螺帽鎖緊,鏡頭朝外'], ['看內部', '拉爆炸圖,或在零件拆分取消勾選盒蓋']],
+            ['主板', '最上層,M3 × 6 鎖在金屬柱頂;最高零件離盒蓋 7.8 mm'], ['SIM7000', '主板中段孔組,M3 × 14 尼龍柱;排針座伸進盒蓋 3.4 mm,柱子改 10 mm 可放下'], ['排線', 'XH 2.5 5P 雙頭 100 mm,SIM7000 -> 主板,J 形垂在板邊外'], ['插卡 / OLED', 'microSD 卡、Micro SIM 卡 × 2、1.3 吋 OLED、DS3231 時鐘模組、跳線帽 × 3(RANGE / SPEED / D_SENSOR 選 5V)'], ['LORA', '主板底面 XH2.5 7P 90° 公座 -> RS485 板 XH 7P,7P 排線 50 mm;原 1×7 母座與 LORA-SUP 排針移除'], ['BAT 線', 'RS485 BAT 2P 母頭(單線)-> 主板 DC 接頭 + 腳底面'], ['Wi-Fi 天線', '銅管天線 + IPEX 50 mm,插 ESP32-S3,平躺在 SIM7000 板下方'], ['雷達', '-X 短邊 Ø48.5 孔,O 型環 43.7 × 2.65 + AGJL-112 螺帽鎖緊,鏡頭朝外'], ['AG-12', '雷達右側上下兩顆,Ø12.2 孔,離右側 34、離底 19 / 44 mm'], ['看內部', '盒蓋預設隱藏,在零件拆分勾回即可顯示;也可拉爆炸圖']],
   },
   rs485: {
     file: 'rs485_v1.gltf.json', title: 'RS485 擴展板 V1',
     specs: [['外形', '100 × 100 mm 方形'], ['板厚', '2.54 mm(沿用 OBJ)'], ['層數', '2 層'],
             ['安裝孔', '4 × Ø3.0(角落)'], ['收發器', 'SP330(RS485 / RS232)'],
             ['介面', '4 × 端子(GND / B− / A+ / 24V)、主板 6P 排針、BAT']],
+  },
+  sim7000e: {
+    file: 'sim7000e.gltf.json', title: 'SIM7000 IoT 模組板 V2.0',
+    specs: [['外形', '59.7 × 65.7 mm'], ['板厚', '2.54 mm(沿用 OBJ)'], ['層數', '2 層'],
+            ['安裝孔', '4 × Ø3.0,孔距 55.1 × 61.1 mm'], ['模組', 'SIMCom SIM7000(可換 SIM7070),IoT / GNSS 兩個 IPEX 天線座'],
+            ['介面', '5P 排針(V / T / R / SW / G)、2 × SIM 卡座'], ['高度', '電解電容不裝(已刪);最高零件 5P 排針座,離板面 5.7 mm']],
   },
   sen0676: {
     file: 'sen0676.gltf.json', title: 'SEN0676 80 GHz 雷達液位感測器',
@@ -429,6 +436,7 @@ const explodeBox = document.getElementById('explode-box'), explodeIn = document.
 const partsEl = document.getElementById('parts'), partsList = document.getElementById('parts-list');
 const pickEl = document.getElementById('pick');
 const GROUP_ORDER = ['列印件', '馬達', '電路板', '電子', '外購件', '五金'];
+const DEFAULT_HIDDEN = new Set(['box_lid']);   // 載入時預設不顯示的零件(防水盒盒蓋)
 let explodeNodes = [], parts = new Map(), selected = null;
 const ghostCache = new Map();
 function ghostOf(mat) {   // 未選取的零件改用半透明材質
@@ -576,6 +584,7 @@ function load(key) {
   loader.load(MODELS[key].file, (gltf) => {
     gltf.scene.traverse((o) => {
       if (o.isMesh && o.material.map) o.material.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      if (o.userData.part && DEFAULT_HIDDEN.has(o.userData.part.id)) o.visible = false;   // 預設隱藏(零件清單可勾回)
     });
     cache[key] = gltf.scene;
     if (token === loadToken) place(key, gltf.scene);
