@@ -65,7 +65,7 @@ GLTFLoader 需要透過 HTTP 讀檔,不能直接雙擊開 `index.html`:
 uv run python -m http.server 8080 -d output/viewer
 ```
 
-開啟 <http://localhost:8080>,左上角可切換三個模型,也可以直接用網址指定:`#pcb`、`#motor`、`#assembly`。
+開啟 <http://localhost:8080>,左上角可切換模型,也可以直接用網址指定:`#pcb`、`#motor`、`#assembly`、`#gimbal`、`#car`。
 
 - 拖曳:自由旋轉(TrackballControls,不受 ±90° 限制)
 - 滾輪 / 雙指:縮放;右鍵:平移
@@ -81,6 +81,7 @@ scripts/
   build_assembly.py     讀入 pcb.glb,加上翻轉後的馬達、銅柱、螺絲、焊到 U/V/W 的出線
   build_gimbal.py       雙軸雲台組合 + 3 個列印件 STL
   build_print_step.py   3 個列印件 STEP(CadQuery),給 CAD 軟體修改
+  build_car.py          舵輪平台車組合 + 6 種列印件 STL / STEP(CadQuery)
   glb_to_gltf_json.py   GLB -> 單檔 glTF JSON(base64 內嵌)
 output/
   pcb.glb                    PCB(約 8.5 MB)
@@ -90,7 +91,9 @@ output/
   gimbal_2axis.glb           雙軸雲台(約 10 MB)
   print/                     列印件 STL(已擺好列印方向)
   step/                      列印件 STEP(組裝位置座標)
-  viewer/                    three.js 檢視頁 + 四個 .gltf.json 模型
+  car_swerve.glb             舵輪平台車(約 12 MB)
+  car/print/, car/step/      平台車列印件 STL / STEP
+  viewer/                    three.js 檢視頁 + 五個 .gltf.json 模型
 ```
 
 ## 模型規格
@@ -164,6 +167,46 @@ uv run scripts/build_print_step.py          # 列印件 STEP(output/step/),給 C
 - 匯入後沒有特徵樹(dumb solid):FreeCAD 可直接加特徵、布林運算;SolidWorks 可用直接編輯
   (Move / Delete Face),Professional / Premium 版可用 FeatureWorks 辨識出孔、擠出等特徵
 - 注意:在 CAD 裡做的修改不會回寫到 Python 腳本
+
+## 舵輪平台車(8 × 2804 模組)
+
+`scripts/build_car.py` 用 8 組「PCB + 2804 馬達」模組做 4 輪舵輪(swerve)平台車:每個角 1 顆驅動 + 1 顆轉向,
+可前進、橫移、原地旋轉。輸出組合模型與 6 種列印件(STL 已擺好列印方向,STEP 可在 CAD 修改)。
+
+```bash
+uv run scripts/build_car.py output/pcb_motor_assembly.glb output/car_swerve.glb   # -> output/car/{print,step}/
+uv run scripts/glb_to_gltf_json.py output/car_swerve.glb output/viewer/car_swerve.gltf.json
+```
+
+檢視頁網址加 `#car`,可切換「前進 / 橫移」與「原地旋轉」模式、拖轉向與車輪滑桿,或按「播放」讓車輪轉動。
+
+每個角由下往上(詳見腳本開頭說明):
+
+1. **車輪**:白色輪轂 + 黑色 TPU 輪胎,Ø64 × 14。輪轂做成杯狀,包住會轉的馬達轉子,用 4 顆 M2.5 鎖在轉子面
+   (輪轂馬達直驅)。轉向軸通過輪子中心面,原地轉向時輪胎不拖地
+2. **驅動模組**:PCB 正面朝轉向叉立板,M2.5 公母銅柱 8 mm 連接(同雲台俯仰模組)
+3. **轉向叉**:L 形,法蘭用 4 顆 M2.5 從下方鎖進轉向馬達轉子面
+4. **轉向模組**:轉子面朝下穿過底板 Ø40 孔,PCB 正面朝上,由**橋架**的 4 根凸柱頂住,M2.5 從橋架上方鎖進模組銅柱
+5. **車身**:黑色底板 + 白色上蓋。橋架用 M3 沉頭螺絲從底板下方鎖;上蓋四角各 4 個孔對準橋架螺絲,
+   不用拆蓋就能鎖。上蓋頂部中央預留雙軸雲台底座的 4 個 M3 孔位,中央放電池(3S 1300 mAh 佔位)
+
+| 列印件 | 尺寸 (mm) | 數量 | 材料 / 列印方向 |
+|---|---|---|---|
+| `top_cover` | 250 × 200 × 32 | 1 | PLA,頂面朝下(頂緣 45° 倒角) |
+| `bottom_plate` | 250 × 200 × 4 | 1 | PLA(黑),平放 |
+| `bridge` | 64 × 64 × 28 | 4 | PLA,頂板朝下 |
+| `fork` | 54 × 44 × 61 | 4 | PLA,法蘭頂面朝下 |
+| `hub` | 56 × 56 × 14 | 4 | PLA,外側面朝下 |
+| `tire` | Ø64 × 11 | 4 | TPU |
+
+整車 250 × 200 × 109 mm(車身 36 mm,下方是舵輪)。上蓋與底板需要 256 mm 以上的熱床。
+
+限制與待確認:
+
+- **轉向的走線**:驅動模組的線要從會轉的叉接到車身,目前沒有滑環,轉向角度要限制在約 ±180° 內
+  (或之後加滑環、改成無線供電通訊)
+- 2804 是雲台馬達,扭力小,適合輕量車;整車重量建議控制在 1.5 kg 以內
+- 電池只是尺寸佔位,實際尺寸不同時改 `BATTERY` 常數
 
 ## 交接:待辦事項
 

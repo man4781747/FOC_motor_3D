@@ -53,6 +53,9 @@
   .axes button { justify-self: start; font: 500 0.78rem var(--font-body); color: var(--ink); background: var(--line);
     border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
   .axes button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .axes .mode { display: flex; gap: 6px; }
+  .axes .mode button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .axes input:disabled { opacity: 0.4; }
   .spec .hint { margin: 0; font-size: 0.75rem; color: var(--muted); }
 
   .views {
@@ -93,6 +96,7 @@
     <button id="m-motor" type="button" aria-pressed="false">2804 馬達</button>
     <button id="m-assembly" type="button" aria-pressed="false">組合</button>
     <button id="m-gimbal" type="button" aria-pressed="false">雙軸雲台</button>
+    <button id="m-car" type="button" aria-pressed="false">舵輪平台車</button>
   </div>
   <h1 id="spec-title">小型獨立運作系統 PCB</h1>
   <dl id="spec-list"></dl>
@@ -100,6 +104,18 @@
     <label for="pan">水平 Pan<input id="pan" type="range" min="-180" max="180" step="1" value="0"><output id="pan-out">0°</output></label>
     <label for="tilt">俯仰 Tilt<input id="tilt" type="range" min="-90" max="90" step="1" value="0"><output id="tilt-out">0°</output></label>
     <button id="axes-reset" type="button">歸零</button>
+  </div>
+  <div class="axes" id="car-axes" hidden>
+    <div class="mode" role="group" aria-label="行駛模式">
+      <button id="car-drive" type="button" aria-pressed="true">前進 / 橫移</button>
+      <button id="car-spin" type="button" aria-pressed="false">原地旋轉</button>
+    </div>
+    <label for="steer">轉向<input id="steer" type="range" min="-180" max="180" step="1" value="0"><output id="steer-out">0°</output></label>
+    <label for="wheel">車輪<input id="wheel" type="range" min="-180" max="180" step="1" value="0"><output id="wheel-out">0°</output></label>
+    <div class="mode">
+      <button id="car-play" type="button" aria-pressed="false">播放</button>
+      <button id="car-reset" type="button">歸零</button>
+    </div>
   </div>
   <p class="hint">拖曳自由旋轉 · 滾輪/雙指縮放 · 右鍵平移</p>
 </section>
@@ -148,7 +164,7 @@ controls.zoomSpeed = 1.2;
 controls.panSpeed = 0.8;
 controls.dynamicDampingFactor = 0.15;
 controls.minDistance = 0.02;
-controls.maxDistance = 0.4;
+controls.maxDistance = 1.2;   // 平台車約 0.26 m 寬
 
 const MODELS = {
   pcb: {
@@ -164,6 +180,11 @@ const MODELS = {
     file: 'gimbal_2axis.gltf.json', title: '雙軸雲台(2 × 2804 模組)',
     specs: [['水平軸', '定子 + PCB 固定在底座,轉子帶動平台'], ['俯仰軸', '模組貼立板,轉子帶相機支架'],
             ['俯仰軸高', '76 mm'], ['連接', 'M2.5 銅柱 8 mm']],
+  },
+  car: {
+    file: 'car_swerve.gltf.json', title: '舵輪平台車(8 × 2804 模組)',
+    specs: [['驅動', '4 × 輪轂直驅,輪 Ø64'], ['轉向', '4 × 舵輪,可 360° 轉'], ['車身', '250 × 200 mm'],
+            ['總高', '109 mm'], ['連接', 'M2.5 銅柱 8 mm、橋架'], ['頂部', '預留雙軸雲台孔位']],
   },
   assembly: {
     file: 'pcb_motor_assembly.gltf.json', title: 'PCB + 2804 馬達組合',
@@ -275,11 +296,57 @@ document.getElementById('axes-reset').addEventListener('click', () => {
   panIn.value = 0; tiltIn.value = 0; applyAxes();
 });
 
+// 舵輪平台車:steer_*(繞 Y)、wheel_*(繞 X);角度與方向存在 glTF extras(three.js 的 userData)
+const carEl = document.getElementById('car-axes');
+const steerIn = document.getElementById('steer'), wheelIn = document.getElementById('wheel');
+const driveBtn = document.getElementById('car-drive'), spinModeBtn = document.getElementById('car-spin');
+const playBtn = document.getElementById('car-play');
+let steerNodes = [], wheelNodes = [], carSpin = false, carPlaying = false, wheelAngle = 0;
+function applyCar() {
+  const steer = +steerIn.value;
+  document.getElementById('steer-out').textContent = carSpin ? '自動' : steer + '°';
+  document.getElementById('wheel-out').textContent = Math.round(wheelAngle) + '°';
+  steerIn.disabled = carSpin;
+  driveBtn.setAttribute('aria-pressed', String(!carSpin));
+  spinModeBtn.setAttribute('aria-pressed', String(carSpin));
+  for (const n of steerNodes) {
+    n.rotation.y = THREE.MathUtils.degToRad(carSpin ? n.userData.spin_steer : steer);
+  }
+  for (const n of wheelNodes) {   // 原地旋轉時四輪同向即可繞中心轉
+    n.rotation.x = THREE.MathUtils.degToRad(wheelAngle * (carSpin ? 1 : n.userData.spin_sign));
+  }
+}
+steerIn.addEventListener('input', applyCar);
+wheelIn.addEventListener('input', () => { wheelAngle = +wheelIn.value; applyCar(); });
+driveBtn.addEventListener('click', () => { carSpin = false; applyCar(); });
+spinModeBtn.addEventListener('click', () => { carSpin = true; applyCar(); });
+playBtn.addEventListener('click', () => {
+  carPlaying = !carPlaying;
+  playBtn.setAttribute('aria-pressed', String(carPlaying));
+  playBtn.textContent = carPlaying ? '暫停' : '播放';
+});
+document.getElementById('car-reset').addEventListener('click', () => {
+  steerIn.value = 0; wheelIn.value = 0; wheelAngle = 0; carSpin = false; applyCar();
+});
+function stepCar() {
+  if (!carPlaying || !wheelNodes.length) return;
+  wheelAngle = ((wheelAngle + 2 + 180) % 360) - 180;
+  wheelIn.value = Math.round(wheelAngle);
+  applyCar();
+}
+
 function place(key, root) {
   panNode = root.getObjectByName('pan_group') || null;
   tiltNode = root.getObjectByName('tilt_group') || null;
   axesEl.hidden = !panNode;
   if (panNode) applyAxes();
+  steerNodes = []; wheelNodes = [];
+  root.traverse((o) => {
+    if ('spin_steer' in o.userData) steerNodes.push(o);
+    if ('spin_sign' in o.userData) wheelNodes.push(o);
+  });
+  carEl.hidden = !steerNodes.length;
+  if (steerNodes.length) applyCar();
   if (current) scene.remove(current);
   current = root;
   scene.add(root);
@@ -325,6 +392,7 @@ load(fromHash());
 renderer.setAnimationLoop((now) => {
   if (tween) tween(now);
   else if (spinning) spin();
+  stepCar();
   controls.update();
   renderer.render(scene, camera);
 });
