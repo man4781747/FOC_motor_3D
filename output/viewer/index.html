@@ -130,6 +130,11 @@
     <button id="m-assembly" type="button" aria-pressed="false">組合</button>
     <button id="m-gimbal" type="button" aria-pressed="false">雙軸雲台</button>
     <button id="m-car" type="button" aria-pressed="false">舵輪平台車</button>
+    <button id="m-waterbox" type="button" aria-pressed="false">水情盒主板</button>
+    <button id="m-waterboxasm" type="button" aria-pressed="false">水情盒</button>
+    <button id="m-rs485" type="button" aria-pressed="false">RS485 擴展板</button>
+    <button id="m-sen0676" type="button" aria-pressed="false">SEN0676 雷達</button>
+    <button id="m-ag12" type="button" aria-pressed="false">AG-12 固定頭</button>
   </div>
   <h1 id="spec-title">小型獨立運作系統 PCB</h1>
   <dl id="spec-list"></dl>
@@ -234,8 +239,38 @@ const MODELS = {
   },
   car: {
     file: 'car_swerve.gltf.json', title: '舵輪平台車(8 × 2804 模組)',
-    specs: [['驅動', '4 × 輪轂直驅,輪 Ø64'], ['轉向', '4 × 舵輪,可 360° 轉'], ['車身', '250 × 200 mm'],
-            ['總高', '190 mm(含防水盒)'], ['連接', 'M2.5 銅柱 8 mm、橋架'], ['頂部', 'RS PRO 防水盒(放置)']],
+    specs: [['驅動', '4 × 輪轂直驅,白色輪框 + 5 條 O 型環胎皮,Ø56'], ['轉向', '4 × 舵輪,可 360° 轉'], ['車身', '250 × 200 mm'],
+            ['總高', '182 mm(含防水盒)'], ['連接', 'M2.5 銅柱 8 mm、橋架'], ['頂部', 'RS PRO 防水盒(放置)']],
+  },
+  waterbox: {
+    file: 'water_box_main_pcb.gltf.json', title: '水情盒主板 Main_PCB V2.4',
+    specs: [['外形', '100 × 100 mm 方形'], ['板厚', '2.54 mm(沿用 OBJ)'], ['層數', '2 層'],
+            ['安裝孔', '4 × Ø3.0(角落)+ 4 × Ø3.0(中段)'], ['電源', 'DM02-36 降壓模組 × 2(3.3 V / 5 V)'],
+            ['介面', 'LoRa、USB、DS3231、OLED、RANGE / SPEED 感測器']],
+  },
+  waterboxasm: {
+    file: 'water_box.gltf.json', title: '水情盒(防水盒 + 底板 + RS485 + 主板 + SEN0676 雷達)',
+    specs: [['防水盒', 'RS PRO 1862264,225 × 175 × 81 mm'], ['底板', '205 × 155 × 2 mm,4 × ST3.0 × 6 鎖在盒底凸柱'],
+            ['RS485 板', '下:M3 × 12 尼龍柱 + M3 × 6;上:M3 × 30 金屬公母柱'], ['RS485 位置', '底板較置中的孔組,兩板轉 270°,端子朝盒子中央'],
+            ['主板', '最上層,M3 × 6 鎖在金屬柱頂;最高零件離盒蓋 7.8 mm'], ['雷達', '-X 短邊 Ø48.5 孔,O 型環 43.7 × 2.65 + AGJL-112 螺帽鎖緊,鏡頭朝外'], ['看內部', '拉爆炸圖,或在零件拆分取消勾選盒蓋']],
+  },
+  rs485: {
+    file: 'rs485_v1.gltf.json', title: 'RS485 擴展板 V1',
+    specs: [['外形', '100 × 100 mm 方形'], ['板厚', '2.54 mm(沿用 OBJ)'], ['層數', '2 層'],
+            ['安裝孔', '4 × Ø3.0(角落)'], ['收發器', 'SP330(RS485 / RS232)'],
+            ['介面', '4 × 端子(GND / B− / A+ / 24V)、主板 6P 排針、BAT']],
+  },
+  sen0676: {
+    file: 'sen0676.gltf.json', title: 'SEN0676 80 GHz 雷達液位感測器',
+    specs: [['外殼', '官方 STEP:六角法蘭 62、G1½ 螺紋、長 53.65 mm'], ['電路板', '35 × 35 mm(依尺寸圖重建,四角 R2)'],
+            ['安裝', '雷達晶片朝鏡頭,4 × M2.5 × 6 自攻鎖進凸柱'], ['孔位', '31 × 31 mm,Ø2.6'],
+            ['介面', '5P:TX / RX / DE / GND / VCC(2.54 mm)'], ['看內部', '拉爆炸圖,或在零件拆分取消勾選外殼']],
+  },
+  ag12: {
+    file: 'ag12.gltf.json', title: 'KSS AG-12 尼龍電纜固定頭',
+    specs: [['螺紋', 'M12 × 1.25,L1 7.9,開孔 Ø12 +0.2'], ['外形', '本體六角 15.2、迫緊頭 Ø15.5、總高 30'],
+            ['線徑', '3 ~ 6.5 mm'], ['螺帽', 'AGL-12 對邊 17、高 5.2'], ['面板', '以 3.09 mm(水情盒牆厚)擺放螺帽'],
+            ['材質', 'NYLON 66 黑、夾緊圈 TPE、墊片 PVC']],
   },
   assembly: {
     file: 'pcb_motor_assembly.gltf.json', title: 'PCB + 2804 馬達組合',

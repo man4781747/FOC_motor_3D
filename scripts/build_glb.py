@@ -5,7 +5,15 @@
 """把 EasyEDA 匯出的 OBJ zip + Gerber 貼圖組合成一個 GLB(glTF 2.0)。
 
 用法:
-    uv run scripts/build_glb.py <OBJ.zip> <貼圖資料夾> <輸出.glb>
+    uv run scripts/build_glb.py <OBJ.zip> <貼圖資料夾> <輸出.glb> [修正檔.json]
+
+修正檔(選用):EasyEDA 有些零件的 3D 模型本身就壞掉(例如面被拉成大三角形),
+可以用 JSON 刪掉該零件的材質群組,換成簡單的方塊:
+    {"drop": ["mtl17"],
+     "add": [{"name": "L1_body", "color": [0.2, 0.2, 0.2], "metal": 0, "rough": 0.6,
+              "box": [x0, x1, y0, y1, z0, z1], "round": 0.8}]}
+座標是 mm,xy 以板子中心為原點(與貼圖一致,+Y 朝上),z=0 是板子背面(板子正面 z=2.54)。
+round > 0 時四條垂直邊倒圓角。
 
 處理內容:
 - EasyEDA OBJ 單位是 10 mil(0.254 mm),換算成公尺(glTF 標準單位)
@@ -24,7 +32,7 @@ import numpy as np
 import trimesh
 
 UNIT_MM = 0.254          # EasyEDA OBJ 1 單位 = 10 mil
-TEX_HALF_MM = 20.32      # 與 make_textures.py 的 HALF 一致
+TEX_HALF_MM = 20.32      # 與 make_textures.py 的 HALF 一致(貼圖資料夾沒有 texture.json 時使用)
 BOARD_MTL = 'mtl1'
 
 
@@ -257,8 +265,32 @@ def gltf_arrays(mesh, normals=None):
     return rot(v), rot(n), np.asarray(mesh.faces)
 
 
+def rounded_prism(x0, x1, y0, y1, z0, z1, r=0.0, seg=6):
+    """垂直邊倒圓角的方塊(mm),回傳 trimesh(公尺)。底面、頂面是凸多邊形,用扇形三角化。"""
+    r = min(r, (x1 - x0) / 2 - 1e-3, (y1 - y0) / 2 - 1e-3)
+    if r <= 0:
+        ring = np.array([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+    else:
+        ring = []
+        for cx, cy, a0 in ((x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)):
+            a = np.radians(np.linspace(a0, a0 + 90, seg + 1))
+            ring += list(zip(cx + r * np.cos(a), cy + r * np.sin(a)))
+        ring = np.array(ring)
+    n = len(ring)
+    v = np.vstack([np.column_stack([ring, np.full(n, z0)]), np.column_stack([ring, np.full(n, z1)]),
+                   [[(x0 + x1) / 2, (y0 + y1) / 2, z0], [(x0 + x1) / 2, (y0 + y1) / 2, z1]]])
+    f = []
+    for i in range(n):
+        j = (i + 1) % n
+        f += [[i, j, n + j], [i, n + j, n + i], [2 * n, j, i], [2 * n + 1, n + i, n + j]]
+    m = trimesh.Trimesh(v / 1000.0, np.array(f), process=True)
+    trimesh.repair.fix_normals(m)
+    return m
+
+
 def main():
     obj_zip, tex_dir, out = sys.argv[1:4]
+    fix = json.loads(Path(sys.argv[4]).read_text()) if len(sys.argv) > 4 else {}
     tex_dir = Path(tex_dir)
     zf = zipfile.ZipFile(obj_zip)
     obj_name = next(n for n in zf.namelist() if n.lower().endswith('.obj'))
@@ -269,8 +301,13 @@ def main():
     board_vi = np.unique(np.array(groups[BOARD_MTL])[:, :, 0])
     bmin, bmax = V[board_vi].min(0), V[board_vi].max(0)
     center = np.array([(bmin[0] + bmax[0]) / 2, (bmin[1] + bmax[1]) / 2, 0.0])
-    print(f'板子中心(OBJ 座標) {center[:2]},直徑 {(bmax[0]-bmin[0])*UNIT_MM:.2f} mm,'
-          f'厚 {(bmax[2]-bmin[2])*UNIT_MM:.2f} mm')
+    size_mm = (bmax - bmin) * UNIT_MM
+    print(f'板子中心(OBJ 座標) {center[:2]},外形 {size_mm[0]:.2f} × {size_mm[1]:.2f} mm,'
+          f'厚 {size_mm[2]:.2f} mm')
+    # 貼圖範圍:板子中心對到貼圖的 center_mm(make_textures.py --fit-outline 時不是原點)
+    tex_half = TEX_HALF_MM
+    if (tex_dir / 'texture.json').exists():
+        tex_half = json.loads((tex_dir / 'texture.json').read_text())['half_mm']
 
     g = GLB()
 
@@ -292,7 +329,11 @@ def main():
     radial = e.triangles_center.copy(); radial[:, 2] = 0
     # 外緣朝外;開孔的內壁中心離軸較近,但仍以「朝向孔外的板材」判斷較複雜,雙面材質可涵蓋
     flip = (e.face_normals * radial).sum(1) < 0
-    outer = np.linalg.norm(radial, axis=1) > 0.019
+    # 外緣:離板子邊界 1 mm 內(圓板用半徑、方板用 bbox 都適用)
+    half_xy = (bmax[:2] - bmin[:2]) * UNIT_MM / 2000
+    r = np.linalg.norm(radial[:, :2], axis=1)
+    outer = (r > half_xy.min() - 1e-3) if np.isclose(*half_xy) and r.max() < half_xy.min() * 1.05 \
+        else (np.abs(radial[:, :2]) > half_xy - 1e-3).any(1)
     e.faces[flip & outer] = e.faces[flip & outer][:, ::-1]
     for side, nz in (('top', 1.0), ('bottom', -1.0)):
         mat = g.material(dict(
@@ -305,8 +346,8 @@ def main():
         nrm = np.tile([0.0, 0.0, nz], (len(m.vertices), 1))
         pos, nrm, idx = gltf_arrays(m, nrm)
         x_mm, y_mm = m.vertices[:, 0] * 1000, m.vertices[:, 1] * 1000
-        uv = np.stack([(x_mm + TEX_HALF_MM) / (2 * TEX_HALF_MM),
-                       (TEX_HALF_MM - y_mm) / (2 * TEX_HALF_MM)], 1)
+        uv = np.stack([(x_mm + tex_half) / (2 * tex_half),
+                       (tex_half - y_mm) / (2 * tex_half)], 1)
         g.mesh(f'PCB_{side}', pos, nrm, idx, mat, uv)
     edge_mat = g.material(dict(name='PCB_edge', pbrMetallicRoughness=dict(
         baseColorFactor=[*srgb_to_linear([0.20, 0.22, 0.30]).tolist(), 1.0],
@@ -318,7 +359,7 @@ def main():
     # 第一階段:清理重疊平面,收集清理過的平面
     meshes, all_planes = OrderedDict(), []
     for name, tris in groups.items():
-        if name == BOARD_MTL:
+        if name == BOARD_MTL or name in fix.get('drop', []):
             continue
         mesh, planes = clean_overlapping_planes(to_mesh(V, tris, center))
         if planes:
@@ -334,6 +375,18 @@ def main():
         mat = g.material(pbr_for(name, m.get('Kd', [0.5] * 3), m.get('Ks')))
         pos, nrm, idx = gltf_arrays(fix_and_shade(mesh))
         g.mesh(f'parts_{name}', pos, nrm, idx, mat)
+
+    # 修正檔:換掉壞掉的零件模型
+    if fix.get('drop'):
+        print('  刪除壞掉的零件材質群組:', ', '.join(fix['drop']))
+    for a in fix.get('add', []):
+        mat = g.material(dict(name=a['name'], pbrMetallicRoughness=dict(
+            baseColorFactor=[*srgb_to_linear(a['color']).tolist(), 1.0],
+            metallicFactor=float(a.get('metal', 0)), roughnessFactor=float(a.get('rough', 0.5)))))
+        m = rounded_prism(*a['box'], r=a.get('round', 0.0))
+        pos, nrm, idx = gltf_arrays(trimesh.graph.smooth_shade(m, angle=SMOOTH_ANGLE))
+        g.mesh(f'parts_{a["name"]}', pos, nrm, idx, mat)
+        print(f'  加入 {a["name"]}:{a["box"]}')
 
     g.save(out)
     print('輸出', out, f'{Path(out).stat().st_size / 1e6:.1f} MB')

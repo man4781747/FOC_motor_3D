@@ -6,14 +6,15 @@
 每個角 1 顆驅動(輪轂直驅)+ 1 顆轉向。輸出組合模型 GLB,以及列印件的 STL(已擺好列印方向)與 STEP。
 
 用法:
-    uv run scripts/build_car.py <pcb_motor_assembly.glb> <輸出.glb> [--out-dir output/car]
+    uv run scripts/build_car.py <pcb_motor_assembly.glb> <輸出.glb> [--out-dir output/car] [--wheel 雲台輪胎.3MF]
 
 世界座標(mm,Z 朝上,地面 z=0),車頭朝 +X。每個角的「舵輪座標」:原點在轉向軸與地面交點,
 輪軸沿 +X(輪轂朝外),再依左右側轉 ±90° 放到車身四角。
 
 結構(由下往上,每個角):
-1. 車輪:白色輪轂(杯狀,包住會轉的馬達轉子)+ 黑色 TPU 輪胎,Ø64 × 14。
-   輪轂用 4 顆 M2.5 鎖在驅動馬達轉子面(Ø16),轉向軸通過輪子中心面,原地轉向時輪胎不拖地。
+1. 車輪:外部提供的一體式杯狀輪框(--wheel,預設 雲台輪胎.3MF,白色),Ø52 × 20,底 4 mm、杯內 Ø46 × 16,
+   包住會轉的馬達轉子。外圈 5 道半圓凹槽各套一條黑色 O 型環(GB/T 3452.1 48.7 × 2.65)當胎皮,外徑約 Ø56。4 顆 M2.5 × 5 從外側 Ø6 沉頭孔鎖進驅動馬達轉子面(Ø16),
+   轉向軸通過輪胎寬度中心面,原地轉向時輪胎不拖地。
 2. 驅動模組:PCB 正面朝轉向叉立板,以 4 支 M2.5 公母銅柱 8 mm 連接(同雲台俯仰模組)。
 3. 轉向叉(L 形,列印件):上方法蘭用 4 顆 M2.5 從下方鎖進轉向馬達轉子面。
 4. 轉向模組:轉子面朝下穿過底板 Ø40 孔;PCB 正面朝上,由「橋架」(列印件)的 4 根凸柱頂住,
@@ -53,10 +54,21 @@ from build_motor import polar, union  # noqa: E402
 from hardware import INSERT_M3, flat_screw, heat_insert, pan_screw, shade, standoff  # noqa: E402
 
 # ---------------- 舵輪尺寸(舵輪座標,mm) ----------------
-WHEEL_R = 32.0                       # 輪胎外半徑
+# 車輪(雲台輪胎.3MF,輪子座標:外側面 z=0、杯底內面 z=WHEEL_FLOOR 貼轉子面、杯緣 z=WHEEL_W)
+WHEEL_RIM_R = 26.0                   # 輪框外半徑
+GROOVE_Z = [2.8, 6.4, 10.0, 13.6, 17.2]   # 輪框外圈 5 道凹槽中心(輪子座標)
+GROOVE_BOTTOM_R = 25.43              # 凹槽底半徑(槽寬 2.27、深 0.57,圓弧半徑約 1.4)
+ORING_ID, ORING_CS = 48.7, 2.65      # O 型環胎皮(GB/T 3452.1),套上後拉伸約 4.4%
+# 拉伸後截面變細(體積不變:截面積 × 中徑 為定值)
+ORING_CS_ON = ORING_CS * np.sqrt((ORING_ID + ORING_CS) / (2 * GROOVE_BOTTOM_R + ORING_CS))
+ORING_R = GROOVE_BOTTOM_R + ORING_CS_ON / 2   # O 型環中心半徑
+WHEEL_R = ORING_R + ORING_CS_ON / 2  # 輪胎外半徑(O 型環外緣,著地)
+WHEEL_W = 20.0                       # 輪寬(外側面到杯緣)
+WHEEL_FLOOR = 4.0                    # 杯底厚
+WHEEL_CUP_R = 23.0                   # 杯內半徑
+WHEEL_CB = 2.4                       # 外側 Ø6 沉頭孔深(螺絲頭座面)
 AXLE_Z = WHEEL_R                     # 輪軸高度
-RIM_R0, RIM_R1, LIP_R = 23.5, 26.5, 28.0   # 輪轂杯內 / 外半徑、擋邊半徑
-XR = 4.0                             # 驅動轉子面的 X;輪子 x ∈ [-7, 7],中心面在轉向軸上
+XR = WHEEL_W / 2 - WHEEL_FLOOR       # 驅動轉子面的 X:輪子 x ∈ [XR + 4, XR - 16] = [10, -10],中心面在轉向軸上
 R_D = R_TILT                         # 驅動模組:模組 -Z(馬達)-> +X
 T_D = np.array([XR, 0, AXLE_Z]) - R_D @ np.array([0, 0, MODULE_ROTOR_Z])
 SPACER = 8.0                         # 驅動模組 PCB 到叉立板的公母銅柱
@@ -103,8 +115,8 @@ PARTS = {
     'bottom_plate': ('底板', '列印件', 1, 'bottom_plate.stl · PLA 黑'),
     'bridge': ('橋架', '列印件', 1, 'bridge.stl · PLA 白'),
     'fork': ('轉向叉', '列印件', 1, 'fork.stl · PLA 白'),
-    'hub': ('輪轂', '列印件', 1, 'hub.stl · PLA 白'),
-    'tire': ('輪胎', '列印件', 1, 'tire.stl · TPU 黑'),
+    'wheel': ('輪框', '列印件', 1, '雲台輪胎.3MF · PLA 白,Ø52 × 20 一體杯狀輪框'),
+    'orings': ('O 型環胎皮', '外購件', 5, 'GB/T 3452.1 O 型環 48.7 × 2.65(NBR 黑),套在輪框 5 道凹槽'),
     'steer_motor': ('轉向馬達', '馬達', 1, '2804 雲台馬達(轉子與定子一體,不可拆);轉子帶動轉向叉'),
     'drive_motor': ('驅動馬達', '馬達', 1, '2804 雲台馬達(轉子與定子一體,不可拆);轉子帶動輪轂'),
     'steer_pcb': ('轉向 PCB', '電路板', 1, 'Ø40 驅動板,正面朝上由橋架凸柱頂住'),
@@ -125,7 +137,7 @@ PARTS = {
     'flange_screws': ('法蘭螺絲', '五金', 4, 'M2.5 × 5 盤頭,從下方鎖進轉向馬達轉子面'),
     'plate_screws': ('立板螺絲', '五金', 4, 'M2.5 × 6 盤頭,鎖進間隔銅柱母牙'),
     'spacers': ('間隔銅柱', '五金', 4, 'M2.5 公母 8 mm,公頭 6 mm 穿過 PCB 鎖進模組銅柱'),
-    'hub_screws': ('輪轂螺絲', '五金', 4, 'M2.5 × 5 盤頭,鎖進驅動馬達轉子面'),
+    'hub_screws': ('車輪螺絲', '五金', 4, 'M2.5 × 5 盤頭,從車輪外側 Ø6 沉頭孔鎖進驅動馬達轉子面'),
 }
 # 爆炸圖位移(mm,Z 朝上,在父節點座標中):照組裝順序往外拆
 EXPLODE = {
@@ -138,7 +150,7 @@ EXPLODE = {
     'fork': (0, 0, 0),
     'flange_screws': (0, 0, -16), 'plate_screws': (-18, 0, 0), 'spacers': (6, 0, 0),
     'drive_module': (25, 0, 0), 'wheel': (50, 0, 0),   # 沿輪軸(舵輪座標 +X)往外
-    'hub': (10, 0, 0), 'tire': (22, 0, 0), 'hub_screws': (34, 0, 0),
+    'wheel': (14, 0, 0), 'orings': (30, 0, 0), 'hub_screws': (44, 0, 0),
 }
 
 MATS = {   # sRGB, 金屬度, 粗糙度
@@ -191,32 +203,33 @@ def countersink(x, y, z_bottom, d=3.4, dk=6.4):
 
 
 # ---------------- 列印件(CadQuery) ----------------
-def make_tire():
-    """黑色 TPU 輪胎(驅動模組座標:輪軸 = Z,朝外 = -Z)。內側倒角配合輪轂擋邊。"""
-    z0, z1 = MODULE_ROTOR_Z - 1.5, MODULE_ROTOR_Z + 9.5      # -23 ~ -12
-    prof = [(RIM_R1, z0), (WHEEL_R - 1, z0), (WHEEL_R, z0 + 1), (WHEEL_R, z1 - 1), (WHEEL_R - 1, z1),
-            (LIP_R, z1), (RIM_R1, z1 - (LIP_R - RIM_R1))]
-    tire = q.revolve(prof)
-    grooves = [q.box(-0.6, 0.6, WHEEL_R - 0.8, WHEEL_R + 1, z0 - 1, z1 + 1).rotate(q.V(0, 0, 0), q.V(0, 0, 1), k * 15)
-               for k in range(24)]
-    return q.finish(tire, grooves)
+def make_orings():
+    """5 條 O 型環(驅動模組座標),套在輪框凹槽裡。"""
+    tori = []
+    for z in GROOVE_Z:
+        t = trimesh.creation.torus(ORING_R, ORING_CS_ON / 2, major_sections=96, minor_sections=16)
+        t.apply_translation([0, 0, MODULE_ROTOR_Z - WHEEL_FLOOR + z])
+        tori.append(t)
+    return trimesh.util.concatenate(tori)
 
 
-def make_hub():
-    """白色輪轂(驅動模組座標)。外側面朝下列印;內側擋邊下緣 45°,不需支撐。"""
-    zf = MODULE_ROTOR_Z                                           # 轉子面 -21.5
-    plate = q.cyl(RIM_R1, 3.0, zf - 3.0)                           # 輪轂盤 -24.5 ~ -21.5
-    rim = q.cyl(RIM_R1, 14.0, zf - 3.0).cut(q.cyl(RIM_R0, 20, zf))  # 杯緣到 -10.5(離定子座 1.25)
-    outer_lip = q.cyl(LIP_R, 1.5, zf - 3.0)
-    inner_lip = q.revolve([(RIM_R0 + 0.1, zf + 7.9), (RIM_R1 - 0.1, zf + 7.9), (LIP_R, zf + 9.5),
-                           (LIP_R, zf + 11.0), (RIM_R0 + 0.1, zf + 11.0)])
-    cuts = [q.cyl(4.5, 10, zf - 5)]                                # 中空軸
-    for x, y in ROTOR_HOLES:
-        cuts += [q.cyl(M25 / 2, 10, zf - 5, x, y), q.cyl(5.6 / 2, 2.5, zf - 4.0, x, y)]   # 外側沉頭 1.5
-    for k in range(6):                                             # 六角鏤空(輪轂外觀)
-        x, y = polar(16.5, 30 + 60 * k)
-        cuts.append(cq.Workplane('XY', origin=(x, y, zf - 4)).polygon(6, 9.0).extrude(5).val())
-    return q.finish(q.fuse(plate, rim, outer_lip, inner_lip), cuts)
+def load_wheel(path):
+    """一體式杯狀輪(3MF)-> 驅動模組座標(輪軸 = Z,朝外 = -Z):杯底內面貼轉子面。"""
+    m = trimesh.load(path, file_type='3mf', force='mesh')
+    ext = m.extents
+    assert abs(ext[0] - 2 * WHEEL_RIM_R) < 0.2 and abs(ext[2] - WHEEL_W) < 0.2, \
+        f'{path} 外形 {ext.round(2)},和 WHEEL_RIM_R / WHEEL_W 常數不符'
+    c = (m.bounds[0] + m.bounds[1]) / 2
+    m.apply_translation([-c[0], -c[1], -m.bounds[0][2]])           # 外側面 z=0、軸心在原點
+    # 檢查凹槽:沿 +X 的縱切面上,各凹槽中心處的外半徑 = 槽底
+    sec = m.section([0, 1, 0], [0, 0, 0])
+    pts = np.vstack(sec.discrete)
+    outer = pts[(pts[:, 0] > GROOVE_BOTTOM_R - 0.5)]
+    for z in GROOVE_Z:
+        near = outer[np.abs(outer[:, 2] - z) < 0.15]
+        assert len(near) and abs(near[:, 0].min() - GROOVE_BOTTOM_R) < 0.05, f'z={z} 找不到凹槽'
+    m.apply_translation([0, 0, MODULE_ROTOR_Z - WHEEL_FLOOR])      # 杯底內面 -> 轉子面
+    return m
 
 
 def make_fork():
@@ -293,8 +306,6 @@ PRINTED = {
     'bottom_plate': (make_bottom_plate, 'print_black', 'up', 1),
     'bridge': (make_bridge, 'print_white', 'flip', 4),
     'fork': (make_fork, 'print_white', 'flip', 4),
-    'hub': (make_hub, 'print_white', 'up', 4),
-    'tire': (make_tire, 'tire', 'up', 4),
 }
 
 
@@ -342,8 +353,9 @@ def fork_hardware():
 
 
 def hub_screws():
-    """驅動模組座標:頭在輪轂外側沉頭孔內(朝 -Z),螺桿鎖進轉子面。"""
-    return union([pan_screw(2.5, 5, 4.5, 1.5).mirror([0, 0, 1]).translate([x, y, MODULE_ROTOR_Z - 1.5])
+    """驅動模組座標:頭在車輪外側沉頭孔內(朝 -Z),螺桿穿過 1.6 mm 杯底鎖進轉子面約 3.4 mm。"""
+    seat = MODULE_ROTOR_Z - (WHEEL_FLOOR - WHEEL_CB)
+    return union([pan_screw(2.5, 5, 4.5, 1.5).mirror([0, 0, 1]).translate([x, y, seat])
                   for x, y in ROTOR_HOLES])
 
 
@@ -421,6 +433,7 @@ def main():
     ap.add_argument('out')
     ap.add_argument('--out-dir', default='output/car')
     ap.add_argument('--box', help='防水盒 3MF(或含 3MF 的 zip),放在上蓋頂面')
+    ap.add_argument('--wheel', default='雲台輪胎.3MF', help='一體式杯狀輪 3MF(Ø52 × 20)')
     args = ap.parse_args()
 
     assert CORNER_X + SWEEP_R + 3 <= BODY_L / 2 and CORNER_Y + SWEEP_R + 3 <= BODY_W / 2, '舵輪轉動範圍超出車身'
@@ -535,8 +548,8 @@ def main():
                               extras=extras(explode='wheel', spin_sign=sign)), steer)
         m = gltf_matrix(R_D, T_D - axle)
         rotor_copy(f'drive_module_rotor_{cname}', rotor, wheel, m, 'drive', R_D, 'wheel')
-        place(f'print_hub@{cname}', lambda: cq_to_trimesh(shapes['hub']), 'print_white', wheel, m, part='hub')
-        place(f'print_tire@{cname}', lambda: cq_to_trimesh(shapes['tire']), 'tire', wheel, m, part='tire')
+        place(f'print_wheel@{cname}', lambda: load_wheel(args.wheel), 'print_white', wheel, m, part='wheel')
+        place(f'orings@{cname}', make_orings, 'tire', wheel, m, part='orings')
         place(f'hub_screws@{cname}', lambda: man_to_trimesh(hub_screws()), 'screw', wheel, m, part='hub_screws')
 
     g.save(args.out)
